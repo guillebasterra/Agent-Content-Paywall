@@ -1,26 +1,52 @@
 """Toll Gate API.
 
-Free:  GET /catalog, GET /ledger, GET /.well-known/tollgate-receipt-key
-Paid:  GET /articles/{id}  (x402 over XRPL; payment goes straight to the writer)
+Free:   GET /catalog, GET /ledger, GET /llms.txt, GET /.well-known/tollgate-receipt-key
+Paid:   GET /articles/{id}  (x402 over XRPL; payment goes straight to the writer)
+Writer: GET/PUT /me/payout, GET /me/dashboard, POST /articles
 """
 
+import base64
 import json
 import logging
 import os
+from pathlib import Path
+from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException, Request
+import frontmatter
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import PlainTextResponse, Response
+from pydantic import BaseModel
 from x402_xrpl.clients.base import decode_payment_response
 from x402_xrpl.facilitator import AsyncFacilitatorClient, FacilitatorClientOptions
-from x402_xrpl.server import require_payment
+from x402_xrpl.types import PaymentPayload
+from xrpl.core.addresscodec import is_valid_classic_address
 
 from . import config
-from .content import load_articles
-from .db import Ledger
+from .content import content_hash, preview_text, seed_articles, slugify, to_drops, to_xrp
+from .db import Database
+from .paywall import agent_name, article_id_from, paywall
 from .receipts import ReceiptSigner
+from .session import DEMO_WRITER_EMAIL, DEMO_WRITER_ID, DEMO_WRITER_NAME, current_writer
 
 log = logging.getLogger("tollgate")
+
+MAX_UPLOAD_BYTES = 2_000_000
+TEXT_UPLOADS = {".md", ".txt"}
+UNSUPPORTED_UPLOADS = "Only .md and .txt files can be uploaded for now."
+LICENSES = {
+    "ai-input": "Read and cite in answers. No training.",
+    "ai-train": "Read, cite and train. Training is priced separately (train_price_xrp).",
+}
+
+PreviewMode = Literal["none", "w50", "w100", "p10"]
+License = Literal["ai-input", "ai-train"]
+Writer = Annotated[dict, Depends(current_writer)]
+
+
+class PayoutUpdate(BaseModel):
+    payout_method: Literal["xrpl"]  # Stripe is not available yet.
+    xrpl_address: str
 
 
 def _signing_key() -> str:
@@ -40,67 +66,162 @@ def _signing_key() -> str:
     return key
 
 
-def create_app(facilitator: AsyncFacilitatorClient | None = None) -> FastAPI:
+def listing(article: dict) -> dict:
+    """The free view of an article. The body must never be added here."""
+    train = article["train_price_drops"]
+    return {
+        "id": article["id"],
+        "title": article["title"],
+        "author": article["author"],
+        "abstract": article["abstract"],
+        "preview": preview_text(article["body"], article["preview_mode"]),
+        "preview_mode": article["preview_mode"],
+        "keywords": article["keywords"],
+        "tags": article["keywords"],
+        "word_count": len(article["body"].split()),
+        "price_xrp": to_xrp(article["price_drops"]),
+        "price_drops": article["price_drops"],
+        "license": article["license"],
+        "train_price_xrp": to_xrp(train) if train else None,
+        "train_price_drops": train,
+        "allowed_agents": article["allowed_agents"],
+        "pay_to": article["pay_to"],
+        "reads": article["reads"],
+        "earned_drops": article["earned_drops"],
+        "earned_xrp": to_xrp(article["earned_drops"]) if article["earned_drops"] else "0",
+        "created_at": article["created_at"],
+        "url": f"{config.PUBLIC_URL}/articles/{article['id']}",
+    }
+
+
+def _matches(item: dict, query: str) -> bool:
+    text = " ".join([item["title"], item["abstract"], item["author"], *item["keywords"]])
+    return query.casefold() in text.casefold()
+
+
+def _split_list(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _unique_id(db: Database, title: str) -> str:
+    slug = slugify(title)
+    candidate, n = slug, 2
+    while db.article_exists(candidate):
+        candidate, n = f"{slug}-{n}", n + 1
+    return candidate
+
+
+def _drops_field(name: str, value: str) -> int:
+    try:
+        return to_drops(value)
+    except ValueError as exc:
+        raise HTTPException(422, f"{name}: {exc}") from None
+
+
+def _llms_txt() -> str:
+    base = config.PUBLIC_URL
+    licenses = "\n".join(f"- {name}: {meaning}" for name, meaning in LICENSES.items())
+    return f"""# Toll Gate
+
+Articles sold to AI agents per read. Each payment goes directly to the writer.
+
+## Search
+
+GET {base}/catalog?q=<text>&sort=reads|earned|new
+Free. Returns title, author, abstract, free preview, keywords, price, license and url for each article.
+
+## Buy with x402
+
+Network: {config.NETWORK} (XRP Ledger testnet). Asset: XRP, priced in drops.
+
+1. GET {base}/articles/<id>. Send an X-Agent-Name header with your name.
+2. The response is 402 with the amount, recipient and invoice in accepts[0].
+3. Sign an XRPL Payment for exactly that amount to that recipient. Copy SourceTag and InvoiceID from accepts[0].extra.
+4. Repeat the GET with the signed payment in a PAYMENT-SIGNATURE header.
+5. The response is 200 with the article body and a signed receipt, and the payment has settled.
+
+The x402-xrpl Python SDK does steps 2 to 4: x402_xrpl.clients.x402_purchase(url, wallet=..., max_value=<drops>).
+A 403 means the writer does not sell this article to your agent. Check allowed_agents in the catalog first.
+
+## Licenses
+
+{licenses}
+
+Each article's license field says which one applies.
+
+## Receipts
+
+Each purchase returns an Ed25519-signed receipt with the article id, content hash, license, price and transaction hash.
+Verify it with the public key at {base}/.well-known/tollgate-receipt-key.
+The signature covers the payload as JSON with sorted keys and no whitespace.
+"""
+
+
+def create_app(
+    facilitator: AsyncFacilitatorClient | None = None,
+    *,
+    db_path: Path | None = None,
+    content_dir: Path | None = None,
+) -> FastAPI:
     if not config.WRITER_ADDRESS:
         raise RuntimeError("WRITER_ADDRESS missing — run `make wallets` first")
 
-    articles = load_articles(config.CONTENT_DIR, config.WRITER_ADDRESS)
-    ledger = Ledger(config.DB_PATH)
+    db = Database(db_path or config.DB_PATH)
+    db.ensure_writer(
+        id=DEMO_WRITER_ID, name=DEMO_WRITER_NAME, email=DEMO_WRITER_EMAIL, xrpl_address=config.WRITER_ADDRESS
+    )
+    for row in seed_articles(content_dir or config.CONTENT_DIR, DEMO_WRITER_ID):
+        if not db.article_exists(row["id"]):
+            db.add_article(row)
+
     signer = ReceiptSigner(_signing_key())
     facilitator = facilitator or AsyncFacilitatorClient(
         FacilitatorClientOptions(base_url=config.FACILITATOR_URL, timeout_seconds=60)
     )
 
     app = FastAPI(title="Toll Gate")
-    app.state.articles, app.state.ledger, app.state.signer = articles, ledger, signer
+    app.state.db, app.state.signer = db, signer
 
-    # --- paywall: one x402 middleware per article (the SDK matches exact paths) ---
-    for a in articles.values():
-        app.middleware("http")(
-            require_payment(
-                path=f"/articles/{a.id}",
-                price=str(a.price_drops),
-                pay_to_address=a.pay_to,
-                network=config.NETWORK,
-                asset="XRP",
-                facilitator=facilitator,
-                resource=f"{config.PUBLIC_URL}/articles/{a.id}",
-                description=f"{a.title} — {a.author} (license: {a.license})",
-                source_tag=config.SOURCE_TAG,
-            )
-        )
+    app.middleware("http")(paywall(db, facilitator))
 
     # --- receipts: runs outside the paywall, after settlement succeeded ---
     @app.middleware("http")
     async def attach_receipt(request: Request, call_next):
         response = await call_next(request)
         settled = response.headers.get("PAYMENT-RESPONSE")
-        article_id = request.url.path.removeprefix("/articles/")
-        if response.status_code != 200 or not settled or article_id not in articles:
+        article_id = article_id_from(request)
+        article = db.article(article_id) if article_id else None
+        if response.status_code != 200 or not settled or article is None:
             return response
 
         settlement = decode_payment_response(settled)
-        a = articles[article_id]
+        # What the buyer actually signed. The writer may have changed payout address
+        # since the invoice was issued, so the database can't say where the money went.
+        signed = json.loads(base64.b64decode(request.headers["PAYMENT-SIGNATURE"]))
+        accepted = PaymentPayload.from_dict(signed).accepted
+        price_drops = int(accepted.amount)
+
         receipt = signer.sign({
-            "article_id": a.id,
-            "title": a.title,
-            "content_hash": a.content_hash,
-            "license": a.license,
-            "price_drops": a.price_drops,
-            "pay_to": a.pay_to,
+            "article_id": article["id"],
+            "title": article["title"],
+            "content_hash": content_hash(article["body"]),
+            "license": article["license"],
+            "price_drops": price_drops,
+            "pay_to": accepted.pay_to,
             "payer": settlement.get("payer"),
             "network": settlement.get("network"),
             "tx_hash": settlement.get("transaction"),
             "explorer": config.EXPLORER_TX + str(settlement.get("transaction")),
         })
-        ledger.record(
+        db.record(
             tx_hash=settlement.get("transaction"),
-            article_id=a.id,
+            article_id=article["id"],
             payer=settlement.get("payer"),
-            pay_to=a.pay_to,
-            price_drops=a.price_drops,
+            pay_to=accepted.pay_to,
+            price_drops=price_drops,
             network=settlement.get("network") or config.NETWORK,
             receipt=receipt,
+            agent=agent_name(request),
         )
 
         body = b"".join([chunk async for chunk in response.body_iterator])
@@ -116,43 +237,126 @@ def create_app(facilitator: AsyncFacilitatorClient | None = None) -> FastAPI:
         expose_headers=["PAYMENT-REQUIRED", "PAYMENT-RESPONSE"],
     )
 
-    # --- routes ---
+    # --- public routes ---
     @app.get("/health")
     def health():
-        return {"ok": True, "articles": len(articles), "network": config.NETWORK}
+        return {"ok": True, "articles": len(db.articles()), "network": config.NETWORK}
 
     @app.get("/catalog")
-    def catalog(q: str | None = None):
-        items = [a.listing(config.PUBLIC_URL) for a in articles.values()]
+    def catalog(q: str | None = None, sort: Literal["reads", "earned", "new"] = "reads"):
+        items = [listing(a) for a in db.articles(sort)]
         if q:
-            ql = q.lower()
-            items = [
-                i for i in items
-                if ql in (i["title"] + " " + i["abstract"] + " " + " ".join(i["tags"])).lower()
-            ]
+            items = [i for i in items if _matches(i, q)]
         return {"articles": items}
 
     @app.get("/articles/{article_id}")
     def read_article(article_id: str):
-        a = articles.get(article_id)
+        a = db.article(article_id)
         if not a:
             raise HTTPException(404, "unknown article")
         return {
-            "id": a.id,
-            "title": a.title,
-            "author": a.author,
-            "license": a.license,
-            "content_hash": a.content_hash,
-            "body": a.body,
+            "id": a["id"],
+            "title": a["title"],
+            "author": a["author"],
+            "license": a["license"],
+            "content_hash": content_hash(a["body"]),
+            "body": a["body"],
         }
 
     @app.get("/ledger")
     def get_ledger(limit: int = 50):
-        return {"purchases": ledger.recent(limit), "earnings": ledger.earnings()}
+        return {"purchases": db.recent(limit), "earnings": db.earnings()}
 
     @app.get("/.well-known/tollgate-receipt-key")
     def receipt_key():
         return {"alg": "ed25519", "public_key": signer.public_key_hex}
+
+    @app.get("/llms.txt", response_class=PlainTextResponse)
+    def llms_txt():
+        return _llms_txt()
+
+    # --- writer routes ---
+    @app.get("/me/payout")
+    def get_payout(writer: Writer):
+        return {k: writer[k] for k in ("name", "email", "payout_method", "xrpl_address")}
+
+    @app.put("/me/payout")
+    def put_payout(update: PayoutUpdate, writer: Writer):
+        address = update.xrpl_address.strip()
+        if not is_valid_classic_address(address):
+            raise HTTPException(422, "That is not a valid XRP Ledger address.")
+        db.set_payout(writer["id"], payout_method=update.payout_method, xrpl_address=address)
+        return {"payout_method": update.payout_method, "xrpl_address": address}
+
+    @app.get("/me/dashboard")
+    def dashboard(writer: Writer):
+        return {
+            "writer": {"name": writer["name"]},
+            "payout": {"method": writer["payout_method"], "xrpl_address": writer["xrpl_address"]},
+            **db.dashboard(writer["id"]),
+        }
+
+    @app.post("/articles", status_code=201)
+    async def create_article(
+        writer: Writer,
+        file: Annotated[UploadFile, File()],
+        price_xrp: Annotated[str, Form()],
+        title: Annotated[str, Form()] = "",
+        abstract: Annotated[str, Form()] = "",
+        preview_mode: Annotated[PreviewMode, Form()] = "w50",
+        keywords: Annotated[str, Form()] = "",
+        license: Annotated[License, Form()] = "ai-input",
+        train_price_xrp: Annotated[str, Form()] = "",
+        allowed_agents: Annotated[str, Form()] = "*",
+    ):
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in TEXT_UPLOADS:
+            raise HTTPException(415, UNSUPPORTED_UPLOADS)
+        raw = await file.read(MAX_UPLOAD_BYTES + 1)
+        if len(raw) > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "The file is larger than 2 MB.")
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise HTTPException(422, "The file must be UTF-8 text.") from None
+
+        meta: dict = {}
+        body = text
+        if suffix == ".md":
+            try:
+                post = frontmatter.loads(text)
+            except Exception:
+                raise HTTPException(422, "The file's frontmatter could not be read.") from None
+            meta, body = post.metadata, post.content
+        body = body.strip()
+        if not body:
+            raise HTTPException(422, "The file has no text.")
+
+        final_title = title.strip() or str(meta.get("title", "")).strip()
+        if not final_title:
+            raise HTTPException(422, "A title is required.")
+        agents = _split_list(allowed_agents)
+        if not agents:
+            raise HTTPException(422, "Choose at least one agent.")
+        train_drops = None
+        if license == "ai-train":
+            train_drops = _drops_field("train_price_xrp", train_price_xrp)
+
+        article_id = _unique_id(db, final_title)
+        db.add_article({
+            "id": article_id,
+            "writer_id": writer["id"],
+            "title": final_title[:200],
+            "abstract": abstract.strip() or str(meta.get("abstract", "")).strip(),
+            "body": body,
+            "preview_mode": preview_mode,
+            "keywords": _split_list(keywords),
+            "price_drops": _drops_field("price_xrp", price_xrp),
+            "license": license,
+            "train_price_drops": train_drops,
+            "allowed_agents": ["*"] if "*" in agents else agents,
+        })
+        return listing(db.article(article_id))
 
     return app
 

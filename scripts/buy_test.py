@@ -52,6 +52,7 @@ def main() -> None:
         rpc_url=rpc,
         network_filter=os.getenv("XRPL_NETWORK", "xrpl:1"),
         max_value=str(int(args.max_xrp * 1_000_000)),
+        headers={"X-Agent-Name": "buy-test"},
         timeout=180,
     )
     print(f"status   {result.status}" + (f"  ({result.reason})" if result.reason else ""))

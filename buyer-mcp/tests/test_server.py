@@ -141,6 +141,7 @@ async def test_sdk_cap_is_the_exact_catalog_price(sdk):
     await buy(cap=1.0)
     assert sdk.calls[0][1]["max_value"] == "500000"
     assert sdk.calls[0][1]["network_filter"] == "xrpl:1"
+    assert sdk.calls[0][1]["headers"] == {"X-Agent-Name": "Claude"}
 
 
 @pytest.mark.anyio
@@ -336,8 +337,11 @@ async def test_settled_with_unreadable_response_is_charged_and_not_rebought(sdk)
 
 @pytest.mark.anyio
 async def test_no_payment_requested_is_not_charged(sdk):
-    sdk.outcome = lambda url: SimpleNamespace(status="success", transaction=None, reason=None)
-    assert (await buy())["status"] == "payment_failed"
+    sdk.outcome = lambda url: SimpleNamespace(
+        status="success", transaction=None, reason=None, response=SimpleNamespace(status_code=403)
+    )
+    result = await buy()
+    assert result["status"] == "payment_failed" and "HTTP 403" in result["reason"]
     assert await remaining() == "5"
 
 

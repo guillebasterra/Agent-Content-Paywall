@@ -8,10 +8,10 @@ Demo: give an agent a budget, it browses the catalog, pays for an article over x
 
 | Dir | What |
 |---|---|
-| `server/` | FastAPI backend — free catalog, x402 paywall, signed receipts |
+| `server/` | FastAPI backend — SQLite content, free catalog, x402 paywall, signed receipts, writer dashboard |
 | `buyer-mcp/` | MCP server for the buyer agent — wallet, budget, buy tools |
-| `web/` | Next.js storefront + live purchases dashboard |
-| `content/` | Seed articles (Markdown + frontmatter) |
+| `web/` | Next.js writer dashboard, upload, catalog and article pages |
+| `content/` | Seed articles (Markdown + frontmatter), imported into SQLite on startup |
 | `scripts/` | Wallet creation, seeding |
 
 ## Requirements
@@ -31,7 +31,12 @@ cd buyer-mcp && uv sync && cd ..
 
 ```bash
 make server   # http://localhost:8000
+make web      # http://localhost:3000
 ```
+
+The backend only allows the origin `http://localhost:3000`, so keep that port and hostname. Set `NEXT_PUBLIC_TOLLGATE_API_URL` to use a backend other than `http://localhost:8000`.
+
+Tests: `make server-test` and `make buyer-test`.
 
 ## Status
 
@@ -39,7 +44,7 @@ make server   # http://localhost:8000
 - [x] Phase 2 — testnet wallets
 - [x] Phase 3 — backend (catalog, paywall, receipts)
 - [x] Phase 4 — buyer MCP
-- [ ] Phase 5 — web storefront + dashboard
+- [x] Phase 5 — web storefront + dashboard
 - [ ] Phase 6 — seed content
 - [ ] Phase 7 — rehearsal
 
@@ -47,10 +52,16 @@ make server   # http://localhost:8000
 
 | Route | Access | Returns |
 |---|---|---|
-| `GET /catalog?q=` | free | titles, abstracts, prices, license, paid URL |
+| `GET /catalog?q=&sort=reads\|earned\|new` | free | titles, abstracts, free previews, prices, license, reads, earned, paid URL |
 | `GET /articles/{id}` | x402 | full text + Ed25519-signed receipt (tx hash, content hash, license) |
+| `GET /llms.txt` | free | how agents search, pay and verify receipts |
 | `GET /ledger` | free | recent purchases + earnings per writer |
 | `GET /.well-known/tollgate-receipt-key` | free | public key to verify receipts |
+| `POST /articles` | writer | publish from a multipart `.md` or `.txt` file. For sale immediately |
+| `GET /me/dashboard` | writer | totals, pieces with reads, earned and agents, earnings by agent |
+| `GET`, `PUT /me/payout` | writer | payout method and XRPL address |
+
+Writer routes run as one demo writer until Supabase Auth replaces `current_writer()` and `getSession()`, so don't expose the backend publicly. Buyers can send an `X-Agent-Name` header, which is recorded with each purchase.
 
 Live test: `make server` in one terminal, `make buy-test` in another.
 

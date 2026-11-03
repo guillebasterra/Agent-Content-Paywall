@@ -284,6 +284,7 @@ def execute_purchase(cfg: Config, article: dict, cap_drops: int) -> dict:
                 # The exact catalog price the budget and any human approval covered.
                 max_value=str(article["price_drops"]),
                 payment_requirements_selector=payment_selector(article),
+                headers={"X-Agent-Name": os.getenv("BUYER_AGENT_NAME", "Claude")},
                 timeout=180,
             )
         except Exception as exc:
@@ -299,7 +300,9 @@ def execute_purchase(cfg: Config, article: dict, cap_drops: int) -> dict:
         entries.remove(entry)
         cfg.book.save(entries)
         if result.status == "success":
-            reason = "The server returned the article without asking for payment."
+            # The SDK reports any first response other than 402 as success, including a 403.
+            status = getattr(result.response, "status_code", "unknown")
+            reason = f"No payment was made. The server answered HTTP {status} instead of asking for payment."
         return {"status": "payment_failed", "paid": False, "sdk_status": result.status, "reason": reason}
 
 

@@ -1,74 +1,70 @@
-"""Load articles from content/*.md (YAML frontmatter + Markdown body)."""
+"""Article text helpers: seeding from content/*.md, uploads and free previews."""
 
 import hashlib
-from dataclasses import dataclass, field
-from decimal import Decimal
+import re
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import frontmatter
 
 DROPS_PER_XRP = 1_000_000
+MAX_DROPS = 100_000_000_000 * DROPS_PER_XRP  # All the XRP there is.
+DEFAULT_PREVIEW = "w50"
 
 
-@dataclass(frozen=True)
-class Article:
-    id: str
-    title: str
-    author: str
-    abstract: str
-    price_xrp: Decimal
-    license: str
-    pay_to: str
-    body: str
-    tags: list[str] = field(default_factory=list)
-
-    @property
-    def price_drops(self) -> int:
-        return int(self.price_xrp * DROPS_PER_XRP)
-
-    @property
-    def content_hash(self) -> str:
-        return "sha256:" + hashlib.sha256(self.body.encode()).hexdigest()
-
-    @property
-    def word_count(self) -> int:
-        return len(self.body.split())
-
-    def listing(self, base_url: str) -> dict:
-        return {
-            "id": self.id,
-            "title": self.title,
-            "author": self.author,
-            "abstract": self.abstract,
-            "tags": self.tags,
-            "word_count": self.word_count,
-            "price_xrp": str(self.price_xrp),
-            "price_drops": self.price_drops,
-            "license": self.license,
-            "pay_to": self.pay_to,
-            "url": f"{base_url}/articles/{self.id}",
-        }
+def to_drops(xrp: object) -> int:
+    """Whole, positive drops, or ValueError. Nothing is rounded, so prices stay exact."""
+    try:
+        drops = Decimal(str(xrp).strip()) * DROPS_PER_XRP
+    except InvalidOperation:
+        raise ValueError("not a number") from None
+    if not drops.is_finite() or drops <= 0 or drops > MAX_DROPS or drops != drops.to_integral_value():
+        raise ValueError("must be a positive XRP amount with at most 6 decimals")
+    return int(drops)
 
 
-def load_articles(content_dir: Path, default_pay_to: str) -> dict[str, Article]:
-    articles: dict[str, Article] = {}
+def to_xrp(drops: int) -> str:
+    return format((Decimal(drops) / DROPS_PER_XRP).normalize(), "f")
+
+
+def content_hash(body: str) -> str:
+    return "sha256:" + hashlib.sha256(body.encode()).hexdigest()
+
+
+def slugify(title: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:80].strip("-") or "article"
+
+
+def preview_text(body: str, mode: str) -> str:
+    """The free part of an article. It is never more than half, so short pieces stay paid."""
+    if mode == "none":
+        return ""
+    # Cut at a word's end within the original text, so paragraph breaks survive.
+    ends = [m.end() for m in re.finditer(r"\S+", body)]
+    wanted = {"w50": 50, "w100": 100, "p10": max(1, len(ends) // 10)}[mode]
+    count = min(wanted, len(ends) // 2)
+    return body[: ends[count - 1]] if count else ""
+
+
+def seed_articles(content_dir: Path, writer_id: str) -> list[dict]:
+    """Rows for content/*.md. Every seeded article belongs to the given writer."""
+    rows = []
     for path in sorted(content_dir.glob("*.md")):
         if path.name.startswith("_") or path.name == "README.md":
             continue
         post = frontmatter.load(path)
         meta = post.metadata
-        article = Article(
-            id=str(meta.get("id") or path.stem),
-            title=str(meta["title"]),
-            author=str(meta.get("author", "unknown")),
-            abstract=str(meta.get("abstract", "")),
-            price_xrp=Decimal(str(meta.get("price_xrp", "0.5"))),
-            license=str(meta.get("license", "ai-input")),
-            pay_to=str(meta.get("pay_to") or default_pay_to),
-            body=post.content.strip(),
-            tags=list(meta.get("tags", [])),
-        )
-        if article.id in articles:
-            raise ValueError(f"duplicate article id: {article.id}")
-        articles[article.id] = article
-    return articles
+        rows.append({
+            "id": str(meta.get("id") or path.stem),
+            "writer_id": writer_id,
+            "title": str(meta["title"]),
+            "abstract": str(meta.get("abstract", "")),
+            "body": post.content.strip(),
+            "preview_mode": str(meta.get("preview_mode", DEFAULT_PREVIEW)),
+            "keywords": [str(k) for k in meta.get("keywords", meta.get("tags", []))],
+            "price_drops": to_drops(meta.get("price_xrp", "0.5")),
+            "license": str(meta.get("license", "ai-input")),
+            "train_price_drops": to_drops(meta["train_price_xrp"]) if meta.get("train_price_xrp") else None,
+            "allowed_agents": [str(a) for a in meta.get("allowed_agents", ["*"])],
+        })
+    return rows
