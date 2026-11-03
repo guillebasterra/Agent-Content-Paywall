@@ -44,6 +44,7 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - `X-Agent-Name` is self-reported. It's recorded per purchase, and `allowed_agents` is checked against it (403 before any payment), so this is an honor system, not access control. Buyer MCP sends `BUYER_AGENT_NAME` (default `Claude`).
 - Free previews are capped at half the article, so "first 100 words" can't give away a short piece. The rule is in `preview_text` and mirrored in `web/app/upload/form.tsx`.
 - The blurred text on the site is filler (`BLURRED_FILLER`). Paid text must never be sent to the browser.
+- Writers see earnings in dollars at a placeholder rate (`USD_PER_XRP` in `web/lib/api.ts`). This is display only: prices, payments and receipts stay in XRP, and writers still set prices in XRP. Revisit with the wallet model.
 - `/llms.txt` is the agent-facing guide. Keep it in sync with the payment flow.
 - Human approval above `BUYER_CONFIRM_ABOVE_XRP` uses `Resolve`/`Elicit`, never `ctx.elicit` (fails on protocol 2026-07-28, which Claude Code speaks) and never a tool argument (the model could self-approve). It fails closed.
 - `max_value` passed to the SDK is the exact catalog price the budget and approval covered, and the selector also pins asset and `pay_to`.

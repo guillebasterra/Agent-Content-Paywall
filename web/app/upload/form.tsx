@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Tile from "@/components/tile";
 import { API_URL, count, errorMessage } from "@/lib/api";
+import { takePendingUpload } from "@/lib/pending-upload";
 
 const PREVIEWS = [
   { id: "none", name: "Abstract only" },
@@ -59,6 +60,12 @@ export default function UploadForm({ author }: { author: string }) {
     if (!title) setTitle(meta.match(/^title:\s*["']?(.+?)["']?\s*$/m)?.[1] ?? titleFromFilename(chosen.name));
     if (!readable) setError("Only .md and .txt files can be uploaded for now.");
   }
+
+  useEffect(() => {
+    chooseFile(takePendingUpload());
+    // Runs once, for a file dropped on the dashboard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function addKeywords(raw: string) {
     const added = raw.split(",").map((k) => k.trim()).filter(Boolean);
@@ -126,7 +133,7 @@ export default function UploadForm({ author }: { author: string }) {
               id="file"
               className="visually-hidden"
               type="file"
-              accept=".md,.docx,.pdf,.txt"
+              accept=".md,.txt"
               aria-labelledby="file-label"
               onChange={(event) => chooseFile(event.target.files?.[0])}
             />
@@ -140,7 +147,7 @@ export default function UploadForm({ author }: { author: string }) {
               }}
             >
               <span>Drop a file or <span className="underline">browse</span></span>
-              <span className="muted small">.md · .docx · .pdf · .txt</span>
+              <span className="muted small">.md · .txt</span>
             </label>
             {file && (
               <div className="file-chip">

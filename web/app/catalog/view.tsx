@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import Tile from "@/components/tile";
-import { API_URL, type Article, reads, xrp } from "@/lib/api";
+import { API_URL, type Article, reads, usd } from "@/lib/api";
 
 const SEARCH_DELAY_MS = 250;
 
@@ -59,7 +59,7 @@ export default function CatalogView() {
             <Tile title={article.title} clear={article.preview || article.abstract}>
               <span className="strong">{article.author}</span>
               <span className="tile-row muted">
-                <span>{xrp(article.earned_drops)} earned</span>
+                <span>{usd(article.earned_drops)} earned</span>
                 <span>{reads(article.reads)}</span>
               </span>
             </Tile>

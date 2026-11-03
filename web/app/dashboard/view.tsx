@@ -1,10 +1,54 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { API_URL, type Dashboard, count, reads, shortAddress, timeAgo, txUrl, xrp } from "@/lib/api";
+import { API_URL, type Dashboard, USD_PER_XRP, count, reads, shortAddress, timeAgo, txUrl, usd } from "@/lib/api";
+import { setPendingUpload } from "@/lib/pending-upload";
 
 const POLL_MS = 3000;
+
+function UploadDrop() {
+  const router = useRouter();
+  const [dragging, setDragging] = useState(false);
+
+  function upload(file: File | null | undefined) {
+    if (!file) return;
+    setPendingUpload(file);
+    router.push("/upload");
+  }
+
+  return (
+    <section aria-label="Upload a new piece" className="upload-drop">
+      <input
+        id="new-piece"
+        className="visually-hidden"
+        type="file"
+        accept=".md,.txt"
+        onChange={(event) => upload(event.target.files?.[0])}
+      />
+      <label
+        htmlFor="new-piece"
+        className={dragging ? "dropzone dropzone-large dropzone-active" : "dropzone dropzone-large"}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragging(false);
+          upload(event.dataTransfer.files[0]);
+        }}
+      >
+        <span className="dropzone-title">Upload a new piece</span>
+        <span className="muted">Drop a file here, or</span>
+        <span className="button">Choose a file</span>
+        <span className="muted small">.md · .txt</span>
+      </label>
+    </section>
+  );
+}
 
 export default function DashboardView() {
   const [data, setData] = useState<Dashboard | null>(null);
@@ -50,85 +94,75 @@ export default function DashboardView() {
     );
   }
 
-  const topAgent = data.by_agent[0]?.earned_drops ?? 0;
-
   return (
     <main className="page page-dashboard">
       {failed && <p className="error" role="alert">Connection lost. Showing the last data received.</p>}
 
-      <section aria-label="Earnings" className="earnings">
-        <span className="muted">Total earned</span>
-        <span className="total">{xrp(data.totals.earned_drops)}</span>
-        <div className="earnings-meta">
-          {data.latest && (
-            <a key={data.latest.tx_hash} className="latest" href={txUrl(data.latest.tx_hash)} target="_blank" rel="noreferrer">
-              <span className="latest-dot" aria-hidden="true" />
-              +{xrp(data.latest.price_drops)} {now ? timeAgo(data.latest.created_at, now) : ""}
-            </a>
-          )}
-          <span>{xrp(data.totals.month_drops)} this month</span>
-          <span>{reads(data.totals.reads)}</span>
-          <Link href="/onboarding/payout">
-            {data.payout.xrpl_address
-              ? <>Payout: XRPL <span className="mono">{shortAddress(data.payout.xrpl_address)}</span></>
-              : "Add a payout method"}
-          </Link>
+      <div className="overview">
+        <div className="stats">
+          <section aria-label="Pieces on the site" className="stat">
+            <span className="muted">Pieces on the site</span>
+            <span className="stat-value">{count(data.pieces.length)}</span>
+            <span className="muted small">{reads(data.totals.reads)}</span>
+          </section>
+          <section aria-label="Earned" className="stat">
+            <span className="muted">Earned</span>
+            <span className="stat-value">{usd(data.totals.earned_drops)}</span>
+            {data.latest && (
+              <a key={data.latest.tx_hash} className="latest" href={txUrl(data.latest.tx_hash)} target="_blank" rel="noreferrer">
+                <span className="latest-dot" aria-hidden="true" />
+                +{usd(data.latest.price_drops)} {now ? timeAgo(data.latest.created_at, now) : ""}
+              </a>
+            )}
+          </section>
         </div>
+        <UploadDrop />
+      </div>
+
+      <section aria-labelledby="pieces-h" className="pieces">
+        <h2 id="pieces-h" className="section-title">Your pieces</h2>
+        {data.pieces.length === 0 ? (
+          <p className="muted">Nothing here yet. Pieces you upload will show up here.</p>
+        ) : (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Piece</th>
+                  <th scope="col">Agents</th>
+                  <th scope="col" className="number">Per read</th>
+                  <th scope="col" className="number">Reads</th>
+                  <th scope="col" className="number">Earned</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.pieces.map((piece) => (
+                  <tr key={piece.id}>
+                    <td className="piece-title"><Link href={`/articles/${encodeURIComponent(piece.id)}`}>{piece.title}</Link></td>
+                    <td>
+                      <span className="chips">
+                        {piece.agents.map((agent) => <span key={agent} className="chip">{agent}</span>)}
+                      </span>
+                    </td>
+                    <td className="number muted">{usd(piece.price_drops)}</td>
+                    <td className="number">{count(piece.reads)}</td>
+                    <td className="number strong">{usd(piece.earned_drops)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
-      <div className="dashboard-columns">
-        <section aria-labelledby="pieces-h" className="pieces">
-          <h2 id="pieces-h" className="section-title">Your pieces</h2>
-          {data.pieces.length === 0 ? (
-            <p className="muted">No pieces yet. <Link href="/upload">Upload one</Link></p>
-          ) : (
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Piece</th>
-                    <th scope="col">Agents</th>
-                    <th scope="col" className="number">Per read</th>
-                    <th scope="col" className="number">Reads</th>
-                    <th scope="col" className="number">Earned</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.pieces.map((piece) => (
-                    <tr key={piece.id}>
-                      <td className="piece-title"><Link href={`/articles/${encodeURIComponent(piece.id)}`}>{piece.title}</Link></td>
-                      <td>
-                        <span className="chips">
-                          {piece.agents.map((agent) => <span key={agent} className="chip">{agent}</span>)}
-                        </span>
-                      </td>
-                      <td className="number muted">{xrp(piece.price_drops)}</td>
-                      <td className="number">{count(piece.reads)}</td>
-                      <td className="number strong">{xrp(piece.earned_drops)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-
-        <section aria-labelledby="agents-h" className="agents">
-          <h2 id="agents-h" className="section-title">By agent</h2>
-          {data.by_agent.length === 0 && <p className="muted">No agent has bought a read yet.</p>}
-          {data.by_agent.map((agent) => (
-            <div key={agent.name} className="agent">
-              <div className="agent-row">
-                <span>{agent.name}</span>
-                <span className="strong">{xrp(agent.earned_drops)}</span>
-              </div>
-              <div className="bar" role="img" aria-label={`${agent.name} paid ${xrp(agent.earned_drops)}`}>
-                <div style={{ width: `${Math.round((agent.earned_drops / topAgent) * 100)}%` }} />
-              </div>
-            </div>
-          ))}
-        </section>
-      </div>
+      <p className="dashboard-note muted small">
+        <Link href="/onboarding/payout">
+          {data.payout.xrpl_address
+            ? <>Payout: XRPL <span className="mono">{shortAddress(data.payout.xrpl_address)}</span></>
+            : "Add a payout method"}
+        </Link>
+        <span>Dollar amounts are estimates at 1 XRP = ${USD_PER_XRP}</span>
+      </p>
     </main>
   );
 }

@@ -35,6 +35,15 @@ export const BLURRED_FILLER =
 export const xrp = (drops: number) =>
   `${(drops / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 6 })} XRP`;
 
+/** Placeholder rate: amounts settle in XRP and are only displayed in dollars. Replace when the wallet model is decided. */
+export const USD_PER_XRP = 2;
+
+/** Shows cents, with up to 6 decimals below $1 so a tiny price never displays as $0.00. */
+export function usd(drops: number): string {
+  const dollars = (drops * USD_PER_XRP) / 1_000_000;
+  return dollars.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: dollars < 1 ? 6 : 2 });
+}
+
 export const count = (n: number) => n.toLocaleString("en-US");
 
 export const reads = (n: number) => `${count(n)} ${n === 1 ? "read" : "reads"}`;

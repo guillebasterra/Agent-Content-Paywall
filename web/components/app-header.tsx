@@ -11,7 +11,7 @@ export default async function AppHeader({ current }: { current: "dashboard" | "c
       <nav aria-label="Main" className="nav">
         <Link href="/dashboard" aria-current={current === "dashboard" ? "page" : undefined}>Dashboard</Link>
         <Link href="/catalog" aria-current={current === "catalog" ? "page" : undefined}>Catalog</Link>
-        <Link href="/upload" className="button button-small">Upload</Link>
+        {current !== "dashboard" && <Link href="/upload" className="button button-small">Upload</Link>}
         {name && <span className="avatar" role="img" aria-label={`Signed in as ${name}`}>{name[0]}</span>}
       </nav>
     </header>

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import Logo from "@/components/logo";
-import { API_URL, type Article, BLURRED_FILLER, reads, xrp } from "@/lib/api";
+import { API_URL, type Article, BLURRED_FILLER, reads, usd, xrp } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +48,7 @@ export default async function ArticlePage({ params }: Props) {
         </main>
       ) : (
         <main className="page article">
-          <span className="muted">{article.author} · {reads(article.reads)} · {xrp(article.earned_drops)} earned</span>
+          <span className="muted">{article.author} · {reads(article.reads)} · {usd(article.earned_drops)} earned</span>
           <h1 className="article-title">{article.title}</h1>
           <p className="article-clear">{article.preview || article.abstract}</p>
           <p className="article-clear article-blurred" aria-hidden="true">{BLURRED_FILLER}</p>
