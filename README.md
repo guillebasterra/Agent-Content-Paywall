@@ -36,9 +36,20 @@ make server   # http://localhost:8000
 ## Status
 
 - [x] Phase 1 — repo scaffold
-- [ ] Phase 2 — testnet wallets
-- [ ] Phase 3 — backend (catalog, paywall, receipts)
+- [x] Phase 2 — testnet wallets
+- [x] Phase 3 — backend (catalog, paywall, receipts)
 - [ ] Phase 4 — buyer MCP
 - [ ] Phase 5 — web storefront + dashboard
 - [ ] Phase 6 — seed content
 - [ ] Phase 7 — rehearsal
+
+## API
+
+| Route | Access | Returns |
+|---|---|---|
+| `GET /catalog?q=` | free | titles, abstracts, prices, license, paid URL |
+| `GET /articles/{id}` | x402 | full text + Ed25519-signed receipt (tx hash, content hash, license) |
+| `GET /ledger` | free | recent purchases + earnings per writer |
+| `GET /.well-known/tollgate-receipt-key` | free | public key to verify receipts |
+
+Live test: `make server` in one terminal, `make buy-test` in another.
