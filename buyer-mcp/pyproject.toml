@@ -8,10 +8,18 @@ dependencies = [
   "python-dotenv",
   "xrpl-py",
   "x402-xrpl==0.3.4",
+  "pynacl",
 ]
+
+[dependency-groups]
+dev = ["pytest"]
 
 [tool.uv]
 package = false
 # x402-xrpl pins uvicorn<0.31 for its own server extras; the buyer client never
 # uses uvicorn, and mcp>=2 needs >=0.31.1.
 override-dependencies = ["uvicorn>=0.31.1"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
