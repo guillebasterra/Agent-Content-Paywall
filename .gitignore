@@ -1,0 +1,25 @@
+# secrets
+.env
+*.seed
+wallets.json
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# data
+*.db
+*.sqlite
+
+# node
+node_modules/
+.next/
+out/
+
+# os / editors
+.DS_Store
+.vscode/
+.idea/
