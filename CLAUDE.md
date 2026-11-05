@@ -79,6 +79,14 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - Wallet seeds stay inside the MCP/server process — never put them in the model's context or tool outputs.
 - Commit messages end with the Co-Authored-By / Claude-Session attribution lines the session provides.
 
+## Pick up here (as of Nov 4, end of day)
+- Everything is merged to `main`. No servers are running. Start them from `docs/DEMO.md`
+- **Rotate first, if not done:** the Supabase `sb_secret_` key, the database password and the Stripe test key were printed into a Claude session transcript on Nov 4. They were not committed. Afterwards update `.env` and rebuild with `make web-demo`
+- **Open decision, Guillermo's:** how to show the agent buying. He doesn't like forcing Claude Desktop and is considering deploying the site. Don't deploy until he says so. Options are in `docs/PLAN.md`
+- Supabase holds rehearsal data: 1 writer with no payout method and 1 article, no purchases. `make demo-reset` clears it. Its Storage bucket also holds Claude's old test uploads in 2 folders, which reset doesn't touch and which are safe to delete
+- `.env` has `AUTH_MODE=supabase` and `BUYER_RAIL=xrpl`
+- Next for a human: finish Stripe onboarding, then run `make payout`
+
 ## Status
 - [x] Phase 1 scaffold · [x] Phase 2 wallets · [x] Phase 3 backend (tested with a mocked facilitator)
 - [x] Live `make buy-test` settled on testnet · [x] Phase 4 buyer MCP (registered with `claude mcp add`)
@@ -87,7 +95,9 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - [x] M1 baseline · [x] M2 Supabase + Postgres · [x] M3 USD + `PaymentRail` · [x] M4 Stripe rail · [x] M5 buyer on Stripe. Plan in `docs/PLAN.md`
 - [x] Live: XRPL purchase through the real MCP over stdio, with browser upload and dashboard tick, in demo mode
 - [x] M6 live in Supabase mode, from `make demo-reset`: code sign-in, magic link (PKCE), upload to Postgres and Storage, XRPL buy, Checkout top-up, webhook, Stripe buy, dashboard, `/llms.txt`. The MCP was driven over stdio
-- [ ] Needs a human: Stripe hosted onboarding (CAPTCHA), so "dashboard shows both", `connected` status and a successful `make payout` are unverified live. One pass in Claude Desktop (add it to `claude_desktop_config.json`, including an above-threshold approval)
+- [x] Guillermo signed in himself on the live site
+- [ ] Needs a human: Stripe hosted onboarding (CAPTCHA), so "dashboard shows both", `connected` status and a successful `make payout` are unverified live
+- [ ] A real model has never run the purchase. The tools were called directly over stdio, so the agent's choices and its citation are untested in Desktop and Claude Code. Desktop isn't configured and is skipped for now
 - [ ] `next dev` sometimes shows a "1 Issue" badge, cause not found, nothing in the console. `make web-demo` has no overlay
 - [ ] `.docx` and `.pdf` uploads (415 for now) · Xaman button (disabled, "Coming soon") · Training sales (the license and price are stored, there is no way to buy yet)
 - [ ] Phase 6 real articles (Guillermo writes; `content/demo/` holds invented drafts) · [ ] Phase 7 rehearsal + backup recording
