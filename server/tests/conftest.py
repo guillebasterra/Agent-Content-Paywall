@@ -5,6 +5,7 @@ os.environ.setdefault("WRITER_ADDRESS", "rBQKgMJ6CvoLZZ13JN9gZjCxdrdQ4ii7W4")
 os.environ["RECEIPT_SIGNING_KEY"] = "11" * 32
 os.environ["XRP_USD_RATE"] = "2"
 os.environ["TREASURY_ADDRESS"] = "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh"
+os.environ["STRIPE_SECRET_KEY"] = ""  # Tests that need Stripe pass a fake gateway.
 os.environ["AUTH_MODE"] = "demo"  # Tests that need Supabase mode pass their own auth.
 
 import uuid

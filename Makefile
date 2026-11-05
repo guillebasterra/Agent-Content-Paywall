@@ -1,4 +1,4 @@
-.PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset demo-otp supabase-setup migrate-db
+.PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset demo-otp supabase-setup migrate-db agent topup payout stripe-listen
 
 server:
 	cd server && uv run uvicorn app.main:app --reload --port 8000
@@ -32,3 +32,19 @@ supabase-setup:
 
 migrate-db:
 	cd server && uv run python ../scripts/migrate_to_postgres.py
+
+agent:
+	cd server && uv run python ../scripts/agent_setup.py
+
+topup:
+	cd server && uv run python ../scripts/topup.py $(ARGS)
+
+payout:
+	cd server && uv run python ../scripts/payout.py
+
+# Writes the webhook secret to .env, then forwards events. Restart `make server` if the secret was new.
+stripe-listen:
+	@set -a; . ./.env; set +a; \
+	secret=$$(stripe listen --api-key "$$STRIPE_SECRET_KEY" --print-secret); \
+	cd server && uv run python -c "import sys; sys.path.insert(0, '../scripts'); from pathlib import Path; from create_wallets import write_env; write_env(Path('../.env'), {'STRIPE_WEBHOOK_SECRET': '$$secret'})"; cd ..; \
+	stripe listen --api-key "$$STRIPE_SECRET_KEY" --forward-to localhost:8000/webhooks/stripe

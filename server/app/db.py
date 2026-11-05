@@ -15,7 +15,7 @@ from pathlib import Path
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-TABLES = ["writers", "articles", "purchases", "ledger_entries"]
+TABLES = ["writers", "articles", "agents", "purchases", "ledger_entries"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS writers (
@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS writers (
     email             TEXT,
     payout_method     TEXT,
     xrpl_address      TEXT,
-    stripe_account_id TEXT
+    stripe_account_id TEXT,
+    stripe_details_submitted INTEGER NOT NULL DEFAULT 0,
+    stripe_payouts_enabled   INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS articles (
     id                TEXT PRIMARY KEY,
@@ -40,6 +42,13 @@ CREATE TABLE IF NOT EXISTS articles (
     train_price_usd_micros BIGINT,
     allowed_agents    TEXT NOT NULL DEFAULT '["*"]',
     storage_path      TEXT,
+    created_at        TEXT NOT NULL DEFAULT {now}
+);
+CREATE TABLE IF NOT EXISTS agents (
+    id                TEXT PRIMARY KEY,
+    name              TEXT NOT NULL,
+    api_key_hash      TEXT UNIQUE NOT NULL,
+    credit_usd_micros BIGINT NOT NULL DEFAULT 0,
     created_at        TEXT NOT NULL DEFAULT {now}
 );
 CREATE TABLE IF NOT EXISTS purchases (
@@ -80,6 +89,8 @@ ADDED_COLUMNS = [
     ("purchases", "agent", "TEXT NOT NULL DEFAULT 'unknown'"),
     ("writers", "auth_user_id", "TEXT"),
     ("articles", "storage_path", "TEXT"),
+    ("writers", "stripe_details_submitted", "INTEGER NOT NULL DEFAULT 0"),
+    ("writers", "stripe_payouts_enabled", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 # The rate the site displayed before prices moved to USD (1 XRP = $2). One drop is two micro-dollars.
@@ -221,10 +232,15 @@ class Database:
         self._backend.close()
 
     def reset(self) -> None:
-        """Delete everything. Only `make demo-reset` calls this."""
+        """Delete everything but agent accounts, whose keys live in .env. Their credit goes back to zero.
+
+        Only `make demo-reset` calls this.
+        """
         with self._conn() as c:
             for table in reversed(TABLES):
-                c.execute(f"DELETE FROM {table}")
+                if table != "agents":
+                    c.execute(f"DELETE FROM {table}")
+            c.execute("UPDATE agents SET credit_usd_micros = 0")
 
     # --- writers ---
 
@@ -256,6 +272,17 @@ class Database:
     def set_name(self, writer_id: str, name: str) -> None:
         with self._conn() as c:
             c.execute("UPDATE writers SET name = ? WHERE id = ?", (name, writer_id))
+
+    def set_stripe_account(self, writer_id: str, account_id: str) -> None:
+        with self._conn() as c:
+            c.execute("UPDATE writers SET stripe_account_id = ? WHERE id = ?", (account_id, writer_id))
+
+    def set_stripe_status(self, writer_id: str, *, details_submitted: bool, payouts_enabled: bool) -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE writers SET stripe_details_submitted = ?, stripe_payouts_enabled = ? WHERE id = ?",
+                (int(details_submitted), int(payouts_enabled), writer_id),
+            )
 
     def set_payout(self, writer_id: str, *, payout_method: str, xrpl_address: str) -> None:
         with self._conn() as c:
@@ -306,6 +333,16 @@ class Database:
     ) -> bool:
         """Write the purchase and its ledger entries in one transaction. A repeated ref changes nothing."""
         with self._conn() as c:
+            if debit_agent_id:
+                # Conditional, so credit can never go below zero however requests interleave.
+                debited = c.execute(
+                    "UPDATE agents SET credit_usd_micros = credit_usd_micros - ? "
+                    "WHERE id = ? AND credit_usd_micros >= ?",
+                    (amount_usd_micros, debit_agent_id, amount_usd_micros),
+                ).rowcount
+                if not debited:
+                    return False
+                self._ledger(c, "agent", debit_agent_id, "read_debit", -amount_usd_micros, ref)
             inserted = c.execute(
                 "INSERT INTO purchases (tx_hash, rail, article_id, writer_id, payer, pay_to, amount_usd_micros, "
                 "amount_native, network, receipt, agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -325,6 +362,51 @@ class Database:
             "VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
             (account_type, account_id, kind, amount_usd_micros, ref),
         ).rowcount)
+
+    # --- agents ---
+
+    def create_agent(self, *, name: str, api_key_hash: str) -> dict:
+        agent_id = str(uuid.uuid4())
+        with self._conn() as c:
+            c.execute("INSERT INTO agents (id, name, api_key_hash) VALUES (?, ?, ?)", (agent_id, name, api_key_hash))
+        return {"id": agent_id, "name": name}
+
+    def agent(self, agent_id: str) -> dict | None:
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        return dict(row) if row else None
+
+    def agent_by_key_hash(self, api_key_hash: str) -> dict | None:
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM agents WHERE api_key_hash = ?", (api_key_hash,)).fetchone()
+        return dict(row) if row else None
+
+    def add_credit(self, agent_id: str, amount_usd_micros: int, ref: str) -> bool:
+        """Add a top-up once. Stripe's webhook and the success page both land here, in either order."""
+        with self._conn() as c:
+            if not self._ledger(c, "agent", agent_id, "topup", amount_usd_micros, ref):
+                return False
+            c.execute(
+                "UPDATE agents SET credit_usd_micros = credit_usd_micros + ? WHERE id = ?",
+                (amount_usd_micros, agent_id),
+            )
+        return True
+
+    # --- writer balances ---
+
+    def writers_with_balance(self) -> list[dict]:
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT w.id, w.name, w.stripe_account_id, b.balance, b.last_entry FROM writers w JOIN ("
+                "SELECT account_id, CAST(SUM(amount_usd_micros) AS BIGINT) AS balance, MAX(id) AS last_entry "
+                "FROM ledger_entries WHERE account_type = 'writer' GROUP BY account_id"
+                ") b ON b.account_id = w.id WHERE b.balance > 0 ORDER BY w.id"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def record_transfer(self, writer_id: str, amount_usd_micros: int, transfer_id: str) -> None:
+        with self._conn() as c:
+            self._ledger(c, "writer", writer_id, "transfer", -amount_usd_micros, transfer_id)
 
     def writer_balance(self, writer_id: str) -> int:
         with self._conn() as c:

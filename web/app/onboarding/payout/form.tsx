@@ -3,57 +3,91 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { errorMessage } from "@/lib/api";
+import { type StripeStatus, errorMessage } from "@/lib/api";
 import { writerFetch } from "@/lib/api-client";
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+const UNREACHABLE = "The backend can't be reached. Start it with make server.";
 
 export default function PayoutForm() {
   const router = useRouter();
-  const [method, setMethod] = useState<"stripe" | "xrpl">("xrpl");
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
+  const [stripe, setStripe] = useState<StripeStatus | null>(null);
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState<"" | "saving" | "stripe">("");
 
   useEffect(() => {
     const controller = new AbortController();
-    writerFetch("/me/payout", { signal: controller.signal })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payout) => {
+    const returned = new URLSearchParams(window.location.search).has("stripe");
+    (async () => {
+      try {
+        const response = await writerFetch("/me/payout", { signal: controller.signal });
+        if (!response.ok) return;
+        const payout = await response.json();
         // Keep anything typed while this was loading.
-        if (payout?.xrpl_address) setAddress((typed) => typed || payout.xrpl_address);
-        if (payout?.name) setName((typed) => typed || payout.name);
-      })
-      .catch(() => {});
+        if (payout.xrpl_address) setAddress((typed) => typed || payout.xrpl_address);
+        if (payout.name) setName((typed) => typed || payout.name);
+        setStripe(payout.stripe);
+        if (returned && payout.stripe.available) {
+          const refreshed = await writerFetch("/me/stripe/refresh", { method: "POST", signal: controller.signal });
+          if (refreshed.ok) setStripe(await refreshed.json());
+        }
+      } catch {
+        // Saving reports the problem if the backend is still unreachable then.
+      }
+    })();
     return () => controller.abort();
   }, []);
 
+  /** Saves what's typed, so leaving for Stripe doesn't lose it. Returns false and shows why on failure. */
+  async function saveDetails(): Promise<boolean> {
+    const profile = await writerFetch("/me/profile", { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ name }) });
+    if (!profile.ok) {
+      setError(await errorMessage(profile));
+      return false;
+    }
+    if (!address.trim()) return true;
+    const payout = await writerFetch("/me/payout", {
+      method: "PUT",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ payout_method: "xrpl", xrpl_address: address }),
+    });
+    if (!payout.ok) setError(await errorMessage(payout));
+    return payout.ok;
+  }
+
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    if (method !== "xrpl") return;
-    setSaving(true);
+    setBusy("saving");
     setError("");
     try {
-      const json = { "Content-Type": "application/json" };
-      const profile = await writerFetch("/me/profile", { method: "PUT", headers: json, body: JSON.stringify({ name }) });
-      if (!profile.ok) {
-        setError(await errorMessage(profile));
-        setSaving(false);
-        return;
-      }
-      const response = await writerFetch("/me/payout", {
-        method: "PUT",
-        headers: json,
-        body: JSON.stringify({ payout_method: "xrpl", xrpl_address: address }),
-      });
-      if (response.ok) {
+      if (await saveDetails()) {
         router.push("/dashboard");
         return;
       }
-      setError(await errorMessage(response));
     } catch {
-      setError("The backend can't be reached. Start it with make server.");
+      setError(UNREACHABLE);
     }
-    setSaving(false);
+    setBusy("");
+  }
+
+  async function connectStripe() {
+    setBusy("stripe");
+    setError("");
+    try {
+      if (await saveDetails()) {
+        const response = await writerFetch("/me/stripe/onboarding", { method: "POST" });
+        if (response.ok) {
+          window.location.assign((await response.json()).url);
+          return;
+        }
+        setError(await errorMessage(response));
+      }
+    } catch {
+      setError(UNREACHABLE);
+    }
+    setBusy("");
   }
 
   return (
@@ -70,51 +104,56 @@ export default function PayoutForm() {
           onChange={(event) => setName(event.target.value)}
         />
       </div>
-      <fieldset className="field-group">
-        <legend className="visually-hidden">Payout method</legend>
 
-        <label className={method === "stripe" ? "option option-on" : "option"}>
-          <input type="radio" name="payout" checked={method === "stripe"} onChange={() => setMethod("stripe")} />
-          <span className="option-text">
-            <span className="option-name">Stripe</span>
-            <span className="muted small">Bank account · USD · paid out daily</span>
-          </span>
-        </label>
-        {method === "stripe" && (
-          <button type="button" className="button button-large" disabled title="Coming soon">Connect with Stripe</button>
-        )}
-
-        <label className={method === "xrpl" ? "option option-on" : "option"}>
-          <input type="radio" name="payout" checked={method === "xrpl"} onChange={() => setMethod("xrpl")} />
+      <div className="field-group">
+        <div className={address.trim() ? "option option-on" : "option"}>
           <span className="option-text">
             <span className="option-name">XRP Ledger</span>
             <span className="muted small">Wallet address · XRP · paid on every read</span>
           </span>
-        </label>
-        {method === "xrpl" && (
-          <div className="field-group">
-            <label htmlFor="addr" className="label-muted">Wallet address</label>
-            <input
-              id="addr"
-              className="input input-large mono"
-              type="text"
-              placeholder="r…"
-              spellCheck={false}
-              autoComplete="off"
-              value={address}
-              onChange={(event) => setAddress(event.target.value)}
-            />
-            <button type="button" className="button button-outline button-large" disabled title="Coming soon">
-              Connect Xaman instead
-            </button>
-          </div>
+        </div>
+        <label htmlFor="addr" className="label-muted">Wallet address</label>
+        <input
+          id="addr"
+          className="input input-large mono"
+          type="text"
+          placeholder="r…"
+          spellCheck={false}
+          autoComplete="off"
+          value={address}
+          onChange={(event) => setAddress(event.target.value)}
+        />
+        <button type="button" className="button button-outline button-large" disabled title="Coming soon">
+          Connect Xaman instead
+        </button>
+      </div>
+
+      <div className="field-group">
+        <div className={stripe?.connected ? "option option-on" : "option"}>
+          <span className="option-text">
+            <span className="option-name">Stripe</span>
+            <span className="muted small">
+              {stripe?.connected ? "Connected · USD · test mode" : "Bank account · USD · test mode"}
+            </span>
+          </span>
+        </div>
+        {!stripe?.connected && (
+          <button
+            type="button"
+            className="button button-outline button-large"
+            disabled={busy !== "" || !stripe?.available}
+            title={stripe && !stripe.available ? "Stripe is not configured on this server" : undefined}
+            onClick={connectStripe}
+          >
+            {busy === "stripe" ? "Opening Stripe…" : "Connect with Stripe"}
+          </button>
         )}
-      </fieldset>
+      </div>
 
       {error && <p className="error" role="alert">{error}</p>}
 
-      <button type="submit" className="button button-large" disabled={saving || method !== "xrpl"}>
-        {saving ? "Saving…" : "Continue"}
+      <button type="submit" className="button button-large" disabled={busy !== ""}>
+        {busy === "saving" ? "Saving…" : "Continue"}
       </button>
       <Link href="/dashboard" className="skip">Skip for now</Link>
     </form>

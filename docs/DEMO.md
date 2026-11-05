@@ -25,6 +25,15 @@ The Magic Link email template must contain `{{ .Token }}`, or no code arrives.
 ```
 Seeds and limits are read from `.env`. Keep them out of this file.
 
+## Stripe
+One-time: `make agent` creates the buyer's account and saves its key to `.env`.
+
+Each run, in its own terminal: `make stripe-listen`. Restart `make server` the first time, so it reads the webhook secret.
+
+Top up before step 6: `make topup ARGS="--usd 10"`. Pay with **4000 0000 0000 0077**, any future date, any CVC. That card makes funds available at once; a normal test card leaves them pending and `make payout` fails with insufficient funds. If the listener is down, the page Checkout returns to still adds the credit.
+
+After step 6, `make payout` sends the accrued balance to the writer's connected account as a test Transfer.
+
 ## Files to upload
 `content/demo/` has two invented draft pieces, one per rail. Replace them with real writing.
 - `orchard-frost-fans.md`. Ask: "Why do Halden Valley orchards start frost fans at 2.4 degrees?"
