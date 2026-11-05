@@ -13,6 +13,23 @@ FACILITATOR_URL = os.getenv("XRPL_FACILITATOR_URL", "https://xrpl-facilitator-te
 WRITER_ADDRESS = os.getenv("WRITER_ADDRESS", "")
 CONTENT_DIR = Path(os.getenv("CONTENT_DIR", ROOT / "content"))
 DB_PATH = Path(os.getenv("DATABASE_URL", "sqlite:///./tollgate.db").removeprefix("sqlite:///"))
+
+AUTH_MODE = os.getenv("AUTH_MODE", "demo")
+if AUTH_MODE not in {"demo", "supabase"}:
+    raise RuntimeError("AUTH_MODE must be demo or supabase")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "")
+
+
+def database_target() -> Path | str:
+    """Postgres in Supabase mode, SQLite in demo mode."""
+    if AUTH_MODE != "supabase":
+        return DB_PATH
+    if not SUPABASE_DB_URL:
+        raise RuntimeError("SUPABASE_DB_URL missing, and AUTH_MODE is supabase")
+    return SUPABASE_DB_URL
 PUBLIC_URL = os.getenv("TOLLGATE_API_URL", "http://localhost:8000").rstrip("/")
 
 # t54's facilitator enforces this SourceTag on XRPL payments it settles.

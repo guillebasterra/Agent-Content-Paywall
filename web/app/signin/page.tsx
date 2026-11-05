@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Logo from "@/components/logo";
 import { API_URL } from "@/lib/api";
 import SignInForm from "./form";
@@ -12,7 +13,7 @@ export default function SignInPage() {
       <main className="centered">
         <div className="stack stack-narrow">
           <h1>Sign in</h1>
-          <SignInForm />
+          <Suspense><SignInForm /></Suspense>
         </div>
       </main>
       <footer className="footer">

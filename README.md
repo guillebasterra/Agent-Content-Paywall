@@ -61,7 +61,7 @@ Tests: `make server-test` and `make buyer-test`.
 | `GET /me/dashboard` | writer | totals, pieces with reads, earned and agents, earnings by agent |
 | `GET`, `PUT /me/payout` | writer | payout method and XRPL address |
 
-Writer routes run as one demo writer until Supabase Auth replaces `current_writer()` and `getSession()`, so don't expose the backend publicly. Buyers can send an `X-Agent-Name` header, which is recorded with each purchase.
+With `AUTH_MODE=demo`, writer routes run unauthenticated as one demo writer, so don't expose the backend publicly. With `AUTH_MODE=supabase` they need a Supabase access token. Buyers can send an `X-Agent-Name` header, which is recorded with each purchase.
 
 Live test: `make server` in one terminal, `make buy-test` in another.
 
