@@ -1,4 +1,4 @@
-"""Create and fund the writer + buyer wallets on XRPL testnet, then save them to .env.
+"""Create and fund the writer, buyer and treasury wallets on XRPL testnet, then save them to .env.
 
 Run from the repo root:  make wallets
 Re-run with --force to replace existing wallets.
@@ -16,7 +16,7 @@ from xrpl.wallet import generate_faucet_wallet
 ROOT = Path(__file__).resolve().parent.parent
 TESTNET_RPC = "https://s.altnet.rippletest.net:51234"
 EXPLORER = "https://testnet.xrpl.org/accounts/"
-ROLES = ["WRITER", "BUYER"]
+ROLES = ["WRITER", "BUYER", "TREASURY"]
 
 
 def read_env(path: Path) -> dict[str, str]:
@@ -74,8 +74,8 @@ def main() -> None:
         if not addr:
             continue
         xrp = drops_to_xrp(str(get_balance(addr, client)))
-        print(f"{role.lower():>6}  {addr}  {xrp} XRP")
-        print(f"        {EXPLORER}{addr}")
+        print(f"{role.lower():>8}  {addr}  {xrp} XRP")
+        print(f"          {EXPLORER}{addr}")
     print(f"\nseeds saved to {args.env} (gitignored, never commit it)")
 
 

@@ -45,7 +45,8 @@ class BudgetBook:
 
 
 def total(entries: list[dict], statuses: tuple[str, ...]) -> int:
-    return sum(e["price_drops"] for e in entries if e["status"] in statuses)
+    """Micro-dollars. Amounts are USD on every rail, so one budget covers them all."""
+    return sum(e["price_usd_micros"] for e in entries if e["status"] in statuses)
 
 
 def find(entries: list[dict], article_id: str) -> dict | None:

@@ -59,7 +59,7 @@ export default function CatalogView() {
             <Tile title={article.title} clear={article.preview || article.abstract}>
               <span className="strong">{article.author}</span>
               <span className="tile-row muted">
-                <span>{usd(article.earned_drops)} earned</span>
+                <span>{usd(article.earned_usd_micros)} earned</span>
                 <span>{reads(article.reads)}</span>
               </span>
             </Tile>

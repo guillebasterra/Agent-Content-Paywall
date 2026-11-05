@@ -7,21 +7,27 @@ export type Article = {
   abstract: string;
   preview: string;
   word_count: number;
+  price_usd: string;
+  price_usd_micros: number;
   price_xrp: string;
-  price_drops: number;
   license: "ai-input" | "ai-train";
-  train_price_xrp: string | null;
+  train_price_usd: string | null;
   allowed_agents: string[];
   reads: number;
-  earned_drops: number;
+  earned_usd_micros: number;
 };
+
+export type Read = { tx_hash: string; rail: string; amount_usd_micros: number; agent: string; created_at: string; title: string };
 
 export type Dashboard = {
   payout: { method: string | null; xrpl_address: string | null };
-  totals: { reads: number; earned_drops: number; month_drops: number };
-  latest: { tx_hash: string; price_drops: number; agent: string; created_at: string; title: string } | null;
-  pieces: { id: string; title: string; price_drops: number; reads: number; earned_drops: number; agents: string[] }[];
-  by_agent: { name: string; reads: number; earned_drops: number }[];
+  xrp_usd_rate: string;
+  balance_usd_micros: number;
+  totals: { reads: number; earned_usd_micros: number; month_usd_micros: number };
+  latest: Read | null;
+  recent: Read[];
+  pieces: { id: string; title: string; price_usd_micros: number; reads: number; earned_usd_micros: number; agents: string[] }[];
+  by_agent: { name: string; reads: number; earned_usd_micros: number }[];
 };
 
 export type Payout = { name: string; email: string | null; payout_method: string | null; xrpl_address: string | null };
@@ -32,15 +38,12 @@ export const BLURRED_FILLER =
   "and what went wrong on the way. The rest of the piece follows from there, source by source, with each detail " +
   "in the place a reader would expect to find it.";
 
-export const xrp = (drops: number) =>
-  `${(drops / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 6 })} XRP`;
-
-/** Placeholder rate: amounts settle in XRP and are only displayed in dollars. Replace when the wallet model is decided. */
-export const USD_PER_XRP = 2;
+/** The placeholder rate behind every XRP amount shown. Prices are USD; only XRPL invoices use XRP. */
+export const XRP_USD_RATE = Number(process.env.NEXT_PUBLIC_XRP_USD_RATE ?? "2");
 
 /** Shows cents, with up to 6 decimals below $1 so a tiny price never displays as $0.00. */
-export function usd(drops: number): string {
-  const dollars = (drops * USD_PER_XRP) / 1_000_000;
+export function usd(micros: number): string {
+  const dollars = micros / 1_000_000;
   return dollars.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: dollars < 1 ? 6 : 2 });
 }
 

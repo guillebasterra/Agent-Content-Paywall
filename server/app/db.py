@@ -1,4 +1,4 @@
-"""Store for writers, articles and the purchase log: SQLite in demo mode, Postgres in Supabase mode.
+"""Store for writers, articles, purchases and the custodial ledger: SQLite in demo mode, Postgres in Supabase mode.
 
 SQL is written once, in the dialect both understand, with ? placeholders. Timestamps are
 ISO text and totals are cast to BIGINT, so results have the same shape on either database.
@@ -15,7 +15,7 @@ from pathlib import Path
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-TABLES = ["writers", "articles", "purchases"]
+TABLES = ["writers", "articles", "purchases", "ledger_entries"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS writers (
@@ -35,24 +35,37 @@ CREATE TABLE IF NOT EXISTS articles (
     body              TEXT NOT NULL,
     preview_mode      TEXT NOT NULL DEFAULT 'w50',
     keywords          TEXT NOT NULL DEFAULT '[]',
-    price_drops       BIGINT NOT NULL,
+    price_usd_micros  BIGINT NOT NULL,
     license           TEXT NOT NULL DEFAULT 'ai-input',
-    train_price_drops BIGINT,
+    train_price_usd_micros BIGINT,
     allowed_agents    TEXT NOT NULL DEFAULT '["*"]',
     storage_path      TEXT,
     created_at        TEXT NOT NULL DEFAULT {now}
 );
 CREATE TABLE IF NOT EXISTS purchases (
-    id          {serial},
-    tx_hash     TEXT UNIQUE NOT NULL,
-    article_id  TEXT NOT NULL,
-    payer       TEXT,
-    pay_to      TEXT NOT NULL,
-    price_drops BIGINT NOT NULL,
-    network     TEXT NOT NULL,
-    receipt     TEXT NOT NULL,
-    agent       TEXT NOT NULL DEFAULT 'unknown',
-    created_at  TEXT NOT NULL DEFAULT {now}
+    id                {serial},
+    tx_hash           TEXT UNIQUE NOT NULL,
+    rail              TEXT NOT NULL DEFAULT 'xrpl',
+    article_id        TEXT NOT NULL,
+    writer_id         TEXT,
+    payer             TEXT,
+    pay_to            TEXT NOT NULL,
+    amount_usd_micros BIGINT NOT NULL,
+    amount_native     BIGINT,
+    network           TEXT NOT NULL,
+    receipt           TEXT NOT NULL,
+    agent             TEXT NOT NULL DEFAULT 'unknown',
+    created_at        TEXT NOT NULL DEFAULT {now}
+);
+CREATE TABLE IF NOT EXISTS ledger_entries (
+    id                {serial},
+    account_type      TEXT NOT NULL,
+    account_id        TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    amount_usd_micros BIGINT NOT NULL,
+    ref               TEXT NOT NULL,
+    created_at        TEXT NOT NULL DEFAULT {now},
+    UNIQUE (account_type, account_id, kind, ref)
 )
 """
 
@@ -69,20 +82,44 @@ ADDED_COLUMNS = [
     ("articles", "storage_path", "TEXT"),
 ]
 
+# The rate the site displayed before prices moved to USD (1 XRP = $2). One drop is two micro-dollars.
+LEGACY_MICROS_PER_DROP = 2
+
+# Rows from before USD pricing, in order: add the new columns, fill them, drop the old ones.
+USD_UPGRADES = {
+    ("articles", "price_drops"): [
+        "ALTER TABLE articles ADD COLUMN price_usd_micros BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE articles ADD COLUMN train_price_usd_micros BIGINT",
+        f"UPDATE articles SET price_usd_micros = price_drops * {LEGACY_MICROS_PER_DROP}, "
+        f"train_price_usd_micros = train_price_drops * {LEGACY_MICROS_PER_DROP}",
+        "ALTER TABLE articles DROP COLUMN price_drops",
+        "ALTER TABLE articles DROP COLUMN train_price_drops",
+    ],
+    ("purchases", "price_drops"): [
+        "ALTER TABLE purchases ADD COLUMN rail TEXT NOT NULL DEFAULT 'xrpl'",
+        "ALTER TABLE purchases ADD COLUMN writer_id TEXT",
+        "ALTER TABLE purchases ADD COLUMN amount_usd_micros BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE purchases ADD COLUMN amount_native BIGINT",
+        f"UPDATE purchases SET amount_native = price_drops, amount_usd_micros = price_drops * {LEGACY_MICROS_PER_DROP}, "
+        "writer_id = (SELECT writer_id FROM articles WHERE articles.id = purchases.article_id)",
+        "ALTER TABLE purchases DROP COLUMN price_drops",
+    ],
+}
+
 ARTICLE_SELECT = """
 SELECT a.*, w.name AS author, w.xrpl_address AS pay_to,
-       COALESCE(p.reads, 0) AS reads, COALESCE(p.earned, 0) AS earned_drops
+       COALESCE(p.reads, 0) AS reads, COALESCE(p.earned, 0) AS earned_usd_micros
 FROM articles a
 JOIN writers w ON w.id = a.writer_id
 LEFT JOIN (
-    SELECT article_id, COUNT(*) AS reads, CAST(SUM(price_drops) AS BIGINT) AS earned
+    SELECT article_id, COUNT(*) AS reads, CAST(SUM(amount_usd_micros) AS BIGINT) AS earned
     FROM purchases GROUP BY article_id
 ) p ON p.article_id = a.id
 """
 
 SORTS = {
     "reads": "reads DESC, a.created_at DESC, a.id",
-    "earned": "earned_drops DESC, a.created_at DESC, a.id",
+    "earned": "earned_usd_micros DESC, a.created_at DESC, a.id",
     "new": "a.created_at DESC, a.id",
 }
 
@@ -116,6 +153,10 @@ class _SQLite:
                 if column not in {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}:
                     c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
             c.execute("CREATE UNIQUE INDEX IF NOT EXISTS writers_auth_user ON writers (auth_user_id)")
+            for (table, column), statements in USD_UPGRADES.items():
+                if column in {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}:
+                    for statement in statements:
+                        c.execute(statement)
 
     def close(self) -> None:
         pass
@@ -148,6 +189,13 @@ class _Postgres:
                 c.execute(statement)
             for table, column, definition in ADDED_COLUMNS:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {definition}")
+            for (table, column), statements in USD_UPGRADES.items():
+                found = c.execute(
+                    "SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ?", (table, column)
+                ).fetchone()
+                if found:
+                    for statement in statements:
+                        c.execute(statement)
             # Supabase serves the public schema to anyone holding the browser's key. RLS with no
             # policies shuts that door. The backend connects as the table owner, which RLS skips.
             for table in TABLES:
@@ -158,7 +206,7 @@ class _Postgres:
 
 
 class Database:
-    SERIAL_TABLES = {"purchases"}  # Tables whose id the database assigns.
+    SERIAL_TABLES = {"purchases", "ledger_entries"}  # Tables whose id the database assigns.
 
     def __init__(self, target: Path | str):
         is_postgres = isinstance(target, str) and target.startswith(("postgres://", "postgresql://"))
@@ -222,12 +270,12 @@ class Database:
         with self._conn() as c:
             c.execute(
                 "INSERT INTO articles (id, writer_id, title, abstract, body, preview_mode, keywords, "
-                "price_drops, license, train_price_drops, allowed_agents, storage_path) "
+                "price_usd_micros, license, train_price_usd_micros, allowed_agents, storage_path) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     article["id"], article["writer_id"], article["title"], article["abstract"], article["body"],
-                    article["preview_mode"], json.dumps(article["keywords"]), article["price_drops"],
-                    article["license"], article["train_price_drops"], json.dumps(article["allowed_agents"]),
+                    article["preview_mode"], json.dumps(article["keywords"]), article["price_usd_micros"],
+                    article["license"], article["train_price_usd_micros"], json.dumps(article["allowed_agents"]),
                     article.get("storage_path"),
                 ),
             )
@@ -252,14 +300,39 @@ class Database:
 
     # --- purchases ---
 
-    def record(self, *, tx_hash, article_id, payer, pay_to, price_drops, network, receipt, agent) -> None:
+    def record_purchase(
+        self, *, ref, rail, article_id, writer_id, payer, pay_to, amount_usd_micros, amount_native,
+        network, receipt, agent, credit_writer=False, debit_agent_id=None,
+    ) -> bool:
+        """Write the purchase and its ledger entries in one transaction. A repeated ref changes nothing."""
         with self._conn() as c:
-            c.execute(
-                "INSERT INTO purchases "
-                "(tx_hash, article_id, payer, pay_to, price_drops, network, receipt, agent) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-                (tx_hash, article_id, payer, pay_to, price_drops, network, json.dumps(receipt), agent),
-            )
+            inserted = c.execute(
+                "INSERT INTO purchases (tx_hash, rail, article_id, writer_id, payer, pay_to, amount_usd_micros, "
+                "amount_native, network, receipt, agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT DO NOTHING",
+                (ref, rail, article_id, writer_id, payer, pay_to, amount_usd_micros, amount_native,
+                 network, json.dumps(receipt), agent),
+            ).rowcount
+            if inserted and credit_writer:
+                self._ledger(c, "writer", writer_id, "read_accrual", amount_usd_micros, ref)
+        return True
+
+    @staticmethod
+    def _ledger(c, account_type, account_id, kind, amount_usd_micros, ref) -> bool:
+        """False if this entry already exists, which is what makes crediting idempotent."""
+        return bool(c.execute(
+            "INSERT INTO ledger_entries (account_type, account_id, kind, amount_usd_micros, ref) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+            (account_type, account_id, kind, amount_usd_micros, ref),
+        ).rowcount)
+
+    def writer_balance(self, writer_id: str) -> int:
+        with self._conn() as c:
+            return c.execute(
+                "SELECT CAST(COALESCE(SUM(amount_usd_micros), 0) AS BIGINT) AS balance FROM ledger_entries "
+                "WHERE account_type = 'writer' AND account_id = ?",
+                (writer_id,),
+            ).fetchone()["balance"]
 
     def recent(self, limit: int = 50) -> list[dict]:
         with self._conn() as c:
@@ -269,8 +342,8 @@ class Database:
     def earnings(self) -> list[dict]:
         with self._conn() as c:
             rows = c.execute(
-                "SELECT pay_to, COUNT(*) AS reads, CAST(SUM(price_drops) AS BIGINT) AS drops "
-                "FROM purchases GROUP BY pay_to ORDER BY drops DESC"
+                "SELECT pay_to, COUNT(*) AS reads, CAST(SUM(amount_usd_micros) AS BIGINT) AS amount_usd_micros "
+                "FROM purchases GROUP BY pay_to ORDER BY amount_usd_micros DESC"
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -281,44 +354,47 @@ class Database:
         with self._conn() as c:
             mine = "FROM purchases p JOIN articles a ON a.id = p.article_id WHERE a.writer_id = ?"
             totals = c.execute(
-                "SELECT COUNT(*) AS reads, CAST(COALESCE(SUM(p.price_drops), 0) AS BIGINT) AS earned_drops, "
+                "SELECT COUNT(*) AS reads, CAST(COALESCE(SUM(p.amount_usd_micros), 0) AS BIGINT) AS earned_usd_micros, "
                 "CAST(COALESCE(SUM(CASE WHEN substr(p.created_at, 1, 7) = ? "
-                f"THEN p.price_drops END), 0) AS BIGINT) AS month_drops {mine}",
+                f"THEN p.amount_usd_micros END), 0) AS BIGINT) AS month_usd_micros {mine}",
                 (month, writer_id),
             ).fetchone()
-            latest = c.execute(
-                "SELECT p.tx_hash, p.price_drops, p.agent, p.created_at, a.title "
-                f"{mine} ORDER BY p.id DESC LIMIT 1",
+            recent = c.execute(
+                "SELECT p.tx_hash, p.rail, p.amount_usd_micros, p.agent, p.created_at, a.title "
+                f"{mine} ORDER BY p.id DESC LIMIT 10",
                 (writer_id,),
-            ).fetchone()
+            ).fetchall()
             by_agent = c.execute(
-                "SELECT p.agent AS name, COUNT(*) AS reads, CAST(SUM(p.price_drops) AS BIGINT) AS earned_drops "
-                f"{mine} GROUP BY p.agent ORDER BY earned_drops DESC, name",
+                "SELECT p.agent AS name, COUNT(*) AS reads, CAST(SUM(p.amount_usd_micros) AS BIGINT) AS earned_usd_micros "
+                f"{mine} GROUP BY p.agent ORDER BY earned_usd_micros DESC, name",
                 (writer_id,),
             ).fetchall()
             agents_per_piece = c.execute(
-                "SELECT p.article_id, p.agent, CAST(SUM(p.price_drops) AS BIGINT) AS earned "
+                "SELECT p.article_id, p.agent, CAST(SUM(p.amount_usd_micros) AS BIGINT) AS earned "
                 f"{mine} GROUP BY p.article_id, p.agent ORDER BY earned DESC, p.agent",
                 (writer_id,),
             ).fetchall()
             pieces = c.execute(
-                f"{ARTICLE_SELECT} WHERE a.writer_id = ? ORDER BY earned_drops DESC, a.created_at DESC, a.id",
+                f"{ARTICLE_SELECT} WHERE a.writer_id = ? ORDER BY earned_usd_micros DESC, a.created_at DESC, a.id",
                 (writer_id,),
             ).fetchall()
 
         agents: dict[str, list[str]] = {}
         for row in agents_per_piece:
             agents.setdefault(row["article_id"], []).append(row["agent"])
+        recent = [dict(r) for r in recent]
         return {
             "totals": dict(totals),
-            "latest": dict(latest) if latest else None,
+            "latest": recent[0] if recent else None,
+            "recent": recent,
+            "balance_usd_micros": self.writer_balance(writer_id),
             "pieces": [
                 {
                     "id": p["id"],
                     "title": p["title"],
-                    "price_drops": p["price_drops"],
+                    "price_usd_micros": p["price_usd_micros"],
                     "reads": p["reads"],
-                    "earned_drops": p["earned_drops"],
+                    "earned_usd_micros": p["earned_usd_micros"],
                     "agents": agents.get(p["id"], []),
                 }
                 for p in pieces

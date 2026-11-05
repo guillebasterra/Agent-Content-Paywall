@@ -2,6 +2,7 @@
 
 import base64
 import json
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -80,7 +81,7 @@ def pay(client, article_id, *, challenge=None, agent=None):
 
 
 def upload(client, *, name="piece.md", body=BODY, **fields):
-    data = {"title": "A new piece", "price_xrp": "1.25", **fields}
+    data = {"title": "A new piece", "price_usd": "2.50", **fields}
     return client.post("/articles", data=data, files={"file": (name, body.encode())})
 
 
@@ -143,7 +144,7 @@ def test_uploaded_article_is_paywalled_without_restart(client):
 
 
 def test_invoice_for_a_cheap_article_cannot_buy_another(client, facilitator):
-    upload(client, title="Expensive", price_xrp="50")
+    upload(client, title="Expensive", price_usd="100")
     cheap = client.get("/articles/seeded").json()
     response = pay(client, "expensive", challenge=cheap)
     assert response.status_code != 200
@@ -184,10 +185,41 @@ def test_unknown_article_is_404_without_a_charge(client):
     assert client.get("/articles/nope").status_code == 404
 
 
-def test_writer_without_address_is_not_served_free(client):
+def test_writer_without_address_or_treasury_is_not_served_free(client, monkeypatch):
+    monkeypatch.setattr(config, "TREASURY_ADDRESS", "")
     client.app.state.db.set_payout("demo", payout_method="xrpl", xrpl_address=None)
     response = client.get("/articles/seeded")
     assert response.status_code == 503 and "word199" not in response.text
+
+
+def test_writer_without_address_is_paid_through_the_treasury_and_credited(client):
+    db = client.app.state.db
+    db.set_payout("demo", payout_method="xrpl", xrpl_address=None)
+    assert client.get("/catalog").json()["articles"][0]["pay_to"] == config.TREASURY_ADDRESS
+    paid = pay(client, "seeded")
+    assert paid.json()["receipt"]["payload"]["pay_to"] == config.TREASURY_ADDRESS
+    assert db.writer_balance("demo") == 1_000_000
+    assert client.get("/me/dashboard").json()["balance_usd_micros"] == 1_000_000
+
+
+def test_direct_payment_leaves_nothing_owed_to_the_writer(client):
+    pay(client, "seeded")
+    assert client.app.state.db.writer_balance("demo") == 0
+
+
+def test_price_is_usd_and_drops_follow_the_rate(client, monkeypatch):
+    created = upload(client, price_usd="0.40").json()
+    assert created["price_usd"] == "0.40" and created["price_xrp"] == "0.2" and created["price_drops"] == 200_000
+    assert client.get(f"/articles/{created['id']}").json()["accepts"][0]["amount"] == "200000"
+    monkeypatch.setattr(config, "XRP_USD_RATE", Decimal("0.5"))
+    assert client.get(f"/articles/{created['id']}").json()["accepts"][0]["amount"] == "800000"
+
+
+def test_receipt_names_the_rail_and_both_amounts(client):
+    payload = pay(client, "seeded").json()["receipt"]["payload"]
+    assert payload["rail"] == "xrpl" and payload["amount_usd"] == "1.00" and payload["price_drops"] == 500_000
+    purchase = client.get("/ledger").json()["purchases"][0]
+    assert purchase["rail"] == "xrpl" and purchase["amount_usd_micros"] == 1_000_000 and purchase["amount_native"] == 500_000
 
 
 def test_agent_name_is_recorded_and_defaults_to_unknown(client):
@@ -212,8 +244,50 @@ def test_old_database_gains_agent_column_and_keeps_purchases(facilitator, conten
     old.commit()
     old.close()
     app = TestClient(create_app(facilitator.client, database=path, content_dir=content))
-    assert app.get("/ledger").json()["purchases"][0]["agent"] == "unknown"
+    purchase = app.get("/ledger").json()["purchases"][0]
+    assert purchase["agent"] == "unknown" and purchase["amount_usd_micros"] == 1_000_000
     assert app.get("/catalog").json()["articles"][0]["reads"] == 1
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
+def test_rows_from_before_usd_pricing_are_converted(backend, facilitator, content, tmp_path, request):
+    import sqlite3
+
+    import psycopg
+
+    old_articles = (
+        "CREATE TABLE {0}articles (id TEXT PRIMARY KEY, writer_id TEXT NOT NULL, title TEXT NOT NULL, "
+        "abstract TEXT NOT NULL DEFAULT '', body TEXT NOT NULL, preview_mode TEXT NOT NULL DEFAULT 'w50', "
+        "keywords TEXT NOT NULL DEFAULT '[]', price_drops BIGINT NOT NULL, license TEXT NOT NULL DEFAULT 'ai-input', "
+        "train_price_drops BIGINT, allowed_agents TEXT NOT NULL DEFAULT '[\"*\"]', storage_path TEXT, "
+        "created_at TEXT NOT NULL DEFAULT '2026-01-01T00:00:00Z')"
+    ).format("")
+    old_writers = "CREATE TABLE writers (id TEXT PRIMARY KEY, auth_user_id TEXT UNIQUE, name TEXT NOT NULL, email TEXT, payout_method TEXT, xrpl_address TEXT, stripe_account_id TEXT)"
+    inserts = [
+        "INSERT INTO writers (id, name, xrpl_address) VALUES ('old', 'Old', 'rBQKgMJ6CvoLZZ13JN9gZjCxdrdQ4ii7W4')",
+        "INSERT INTO articles (id, writer_id, title, body, price_drops, train_price_drops) VALUES ('a', 'old', 'A', 'text', 500000, 25000000)",
+    ]
+    if backend == "sqlite":
+        target = tmp_path / "legacy.db"
+        conn = sqlite3.connect(target)
+        for sql in [old_writers, old_articles, *inserts]:
+            conn.execute(sql)
+        conn.commit()
+        conn.close()
+    else:
+        url = request.getfixturevalue("postgres_url")
+        with psycopg.connect(url, autocommit=True) as admin:
+            admin.execute("CREATE DATABASE legacy_usd")
+        target = url.replace("/postgres?", "/legacy_usd?")
+        with psycopg.connect(target, autocommit=True) as conn:
+            for sql in [old_writers, old_articles, *inserts]:
+                conn.execute(sql)
+    empty = tmp_path / "none"
+    empty.mkdir()
+    app = create_app(facilitator.client, database=target, content_dir=empty)
+    item = TestClient(app).get("/catalog").json()["articles"][0]
+    assert item["price_usd"] == "1.00" and item["train_price_usd"] == "50.00"
+    app.state.db.close()
 
 
 def test_allowed_agents_blocks_before_any_payment(client, facilitator):
@@ -239,8 +313,8 @@ def test_preview_never_gives_away_a_short_article(client):
 
 
 def test_catalog_search_sort_and_counts(client):
-    upload(client, title="Second piece", keywords="carburetors", price_xrp="3")
-    upload(client, title="Third piece", price_xrp="1")
+    upload(client, title="Second piece", keywords="carburetors", price_usd="6")
+    upload(client, title="Third piece", price_usd="2")
     for _ in range(2):
         pay(client, "third-piece")
     pay(client, "second-piece")
@@ -251,23 +325,23 @@ def test_catalog_search_sort_and_counts(client):
     assert ids(q="CARBURETOR") == ["second-piece"]
     assert ids(q="how do carburetors work") == ["second-piece"]
     third = next(a for a in client.get("/catalog").json()["articles"] if a["id"] == "third-piece")
-    assert third["reads"] == 2 and third["earned_xrp"] == "2"
+    assert third["reads"] == 2 and third["earned_usd"] == "4.00"
     assert client.get("/catalog", params={"sort": "bad"}).status_code == 422
 
 
 def test_dashboard_totals_pieces_and_agents(client):
-    upload(client, title="Other", price_xrp="2")
+    upload(client, title="Other", price_usd="4")
     pay(client, "seeded", agent="Claude")
     pay(client, "other", agent="Muse")
     pay(client, "other", agent="Claude")
     data = client.get("/me/dashboard").json()
-    assert data["totals"] == {"reads": 3, "earned_drops": 4_500_000, "month_drops": 4_500_000}
+    assert data["totals"] == {"reads": 3, "earned_usd_micros": 9_000_000, "month_usd_micros": 9_000_000}
     assert data["payout"] == {"method": "xrpl", "xrpl_address": WRITER}
     assert data["latest"]["agent"] == "Claude" and data["latest"]["title"] == "Other"
     pieces = {p["id"]: p for p in data["pieces"]}
-    assert pieces["other"]["reads"] == 2 and pieces["other"]["earned_drops"] == 4_000_000
+    assert pieces["other"]["reads"] == 2 and pieces["other"]["earned_usd_micros"] == 8_000_000
     assert sorted(pieces["other"]["agents"]) == ["Claude", "Muse"]
-    assert data["by_agent"][0] == {"name": "Claude", "reads": 2, "earned_drops": 2_500_000}
+    assert data["by_agent"][0] == {"name": "Claude", "reads": 2, "earned_usd_micros": 5_000_000}
 
 
 def test_empty_dashboard(tmp_path, facilitator, database):
@@ -309,9 +383,9 @@ def test_upload_strips_frontmatter_and_uses_it_as_fallback(client):
 @pytest.mark.parametrize(
     "fields",
     [
-        {"price_xrp": "0"}, {"price_xrp": "-1"}, {"price_xrp": "abc"}, {"price_xrp": "NaN"},
-        {"price_xrp": "0.0000001"}, {"preview_mode": "all"}, {"license": "free"},
-        {"license": "ai-train"}, {"license": "ai-train", "train_price_xrp": "0"},
+        {"price_usd": "0"}, {"price_usd": "-1"}, {"price_usd": "abc"}, {"price_usd": "NaN"},
+        {"price_usd": "0.0000001"}, {"preview_mode": "all"}, {"license": "free"},
+        {"license": "ai-train"}, {"license": "ai-train", "train_price_usd": "0"},
         {"allowed_agents": " , "}, {"title": "   "},
     ],
 )
@@ -325,15 +399,15 @@ def test_upload_rejects_empty_text(client, body):
 
 
 def test_upload_rejects_non_utf8_and_oversize(client):
-    response = client.post("/articles", data={"title": "x", "price_xrp": "1"}, files={"file": ("a.txt", b"\xff\xfe\xff")})
+    response = client.post("/articles", data={"title": "x", "price_usd": "1"}, files={"file": ("a.txt", b"\xff\xfe\xff")})
     assert response.status_code == 422
     assert upload(client, body="x" * 2_000_001).status_code == 413
 
 
 def test_training_license_keeps_its_price(client):
-    created = upload(client, license="ai-train", train_price_xrp="25").json()
-    assert created["train_price_xrp"] == "25" and created["train_price_drops"] == 25_000_000
-    assert upload(client, train_price_xrp="25").json()["train_price_drops"] is None
+    created = upload(client, license="ai-train", train_price_usd="50").json()
+    assert created["train_price_usd"] == "50.00"
+    assert upload(client, train_price_usd="50").json()["train_price_usd"] is None
 
 
 def test_same_title_gets_a_new_id(client):

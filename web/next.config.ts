@@ -9,6 +9,7 @@ const config: NextConfig = {
   devIndicators: false, // The floating badge would cover content on the demo screen.
   agentRules: false, // Agent guidance lives in the repo's CLAUDE.md.
   env: {
+    NEXT_PUBLIC_XRP_USD_RATE: process.env.XRP_USD_RATE ?? "2",
     NEXT_PUBLIC_AUTH_MODE: process.env.AUTH_MODE ?? "demo",
     NEXT_PUBLIC_SUPABASE_URL: process.env.SUPABASE_URL ?? "",
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.SUPABASE_PUBLISHABLE_KEY ?? "",

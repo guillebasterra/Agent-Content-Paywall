@@ -5,8 +5,6 @@ Paid:   GET /articles/{id}  (x402 over XRPL; payment goes straight to the writer
 Writer: GET/PUT /me/payout, PUT /me/profile, GET /me/dashboard, POST /articles
 """
 
-import base64
-import json
 import logging
 import os
 from pathlib import Path
@@ -15,17 +13,17 @@ from typing import Annotated, Literal
 import frontmatter
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
-from x402_xrpl.clients.base import decode_payment_response
 from x402_xrpl.facilitator import AsyncFacilitatorClient, FacilitatorClientOptions
-from x402_xrpl.types import PaymentPayload
 from xrpl.core.addresscodec import is_valid_classic_address
 
 from . import config
-from .content import content_hash, preview_text, seed_articles, slugify, to_drops, to_xrp
+from .content import content_hash, format_usd, preview_text, seed_articles, slugify, to_micros, to_xrp, usd_to_drops
 from .db import Database
-from .paywall import agent_name, article_id_from, paywall
+from .paywall import agent_name, paywall
+from .rails.settle import Settlements
+from .rails.xrpl import XrplRail, pay_to_address
 from .receipts import ReceiptSigner
 from .session import DEMO_WRITER_EMAIL, DEMO_WRITER_ID, DEMO_WRITER_NAME, DemoAuth, SupabaseAuth, current_writer
 from .storage import SupabaseStorage
@@ -37,7 +35,7 @@ TEXT_UPLOADS = {".md", ".txt"}
 UNSUPPORTED_UPLOADS = "Only .md and .txt files can be uploaded for now."
 LICENSES = {
     "ai-input": "Read and cite in answers. No training.",
-    "ai-train": "Read, cite and train. Training is priced separately (train_price_xrp).",
+    "ai-train": "Read, cite and train. Training is priced separately (train_price_usd).",
 }
 
 PreviewMode = Literal["none", "w50", "w100", "p10"]
@@ -73,7 +71,8 @@ def _signing_key() -> str:
 
 def listing(article: dict) -> dict:
     """The free view of an article. The body must never be added here."""
-    train = article["train_price_drops"]
+    train = article["train_price_usd_micros"]
+    drops = usd_to_drops(article["price_usd_micros"], config.XRP_USD_RATE)
     return {
         "id": article["id"],
         "title": article["title"],
@@ -84,16 +83,17 @@ def listing(article: dict) -> dict:
         "keywords": article["keywords"],
         "tags": article["keywords"],
         "word_count": len(article["body"].split()),
-        "price_xrp": to_xrp(article["price_drops"]),
-        "price_drops": article["price_drops"],
+        "price_usd": format_usd(article["price_usd_micros"]),
+        "price_usd_micros": article["price_usd_micros"],
+        "price_xrp": to_xrp(drops),
+        "price_drops": drops,
         "license": article["license"],
-        "train_price_xrp": to_xrp(train) if train else None,
-        "train_price_drops": train,
+        "train_price_usd": format_usd(train) if train else None,
         "allowed_agents": article["allowed_agents"],
-        "pay_to": article["pay_to"],
+        "pay_to": pay_to_address(article),
         "reads": article["reads"],
-        "earned_drops": article["earned_drops"],
-        "earned_xrp": to_xrp(article["earned_drops"]) if article["earned_drops"] else "0",
+        "earned_usd": format_usd(article["earned_usd_micros"]),
+        "earned_usd_micros": article["earned_usd_micros"],
         "created_at": article["created_at"],
         "url": f"{config.PUBLIC_URL}/articles/{article['id']}",
     }
@@ -117,9 +117,9 @@ def _unique_id(db: Database, title: str) -> str:
     return candidate
 
 
-def _drops_field(name: str, value: str) -> int:
+def _usd_field(name: str, value: str) -> int:
     try:
-        return to_drops(value)
+        return to_micros(value)
     except ValueError as exc:
         raise HTTPException(422, f"{name}: {exc}") from None
 
@@ -129,7 +129,7 @@ def _llms_txt() -> str:
     licenses = "\n".join(f"- {name}: {meaning}" for name, meaning in LICENSES.items())
     return f"""# Toll Gate
 
-Articles sold to AI agents per read. Each payment goes directly to the writer.
+Articles sold to AI agents per read. Prices are in US dollars.
 
 ## Search
 
@@ -138,7 +138,8 @@ Free. Returns title, author, abstract, free preview, keywords, price, license an
 
 ## Buy with x402
 
-Network: {config.NETWORK} (XRP Ledger testnet). Asset: XRP, priced in drops.
+Network: {config.NETWORK} (XRP Ledger testnet). Asset: XRP, invoiced in drops at 1 XRP = ${config.XRP_USD_RATE} (placeholder rate).
+The payment goes directly to the writer, or to a platform treasury that credits the writer if they have no XRPL address.
 
 1. GET {base}/articles/<id>. Send an X-Agent-Name header with your name.
 2. The response is 402 with the amount, recipient and invoice in accepts[0].
@@ -157,7 +158,7 @@ Each article's license field says which one applies.
 
 ## Receipts
 
-Each purchase returns an Ed25519-signed receipt with the article id, content hash, license, price and transaction hash.
+Each purchase returns an Ed25519-signed receipt with the rail, article id, content hash, license, amount and transaction hash.
 Verify it with the public key at {base}/.well-known/tollgate-receipt-key.
 The signature covers the payload as JSON with sorted keys and no whitespace.
 """
@@ -185,17 +186,17 @@ def create_app(
     auth=None,
     storage: SupabaseStorage | None = None,
 ) -> FastAPI:
-    if not config.WRITER_ADDRESS:
+    auth = auth or _default_auth()
+    if isinstance(auth, DemoAuth) and not config.WRITER_ADDRESS:
         raise RuntimeError("WRITER_ADDRESS missing — run `make wallets` first")
 
     db = Database(database or config.database_target())
-    auth = auth or _default_auth()
     storage = storage or _default_storage()
-    seeds = seed_articles(content_dir or config.CONTENT_DIR, DEMO_WRITER_ID)
+    seeds = seed_articles(content_dir or config.CONTENT_DIR, DEMO_WRITER_ID, config.XRP_USD_RATE)
     # Demo mode needs its writer to sign in as. Otherwise it only exists to own seeded articles.
     if isinstance(auth, DemoAuth) or seeds:
         db.ensure_writer(
-            id=DEMO_WRITER_ID, name=DEMO_WRITER_NAME, email=DEMO_WRITER_EMAIL, xrpl_address=config.WRITER_ADDRESS
+            id=DEMO_WRITER_ID, name=DEMO_WRITER_NAME, email=DEMO_WRITER_EMAIL, xrpl_address=config.WRITER_ADDRESS or None
         )
     for row in seeds:
         if not db.article_exists(row["id"]):
@@ -209,52 +210,9 @@ def create_app(
     app = FastAPI(title="Toll Gate")
     app.state.db, app.state.signer, app.state.auth = db, signer, auth
 
-    app.middleware("http")(paywall(db, facilitator))
-
-    # --- receipts: runs outside the paywall, after settlement succeeded ---
-    @app.middleware("http")
-    async def attach_receipt(request: Request, call_next):
-        response = await call_next(request)
-        settled = response.headers.get("PAYMENT-RESPONSE")
-        article_id = article_id_from(request)
-        article = db.article(article_id) if article_id else None
-        if response.status_code != 200 or not settled or article is None:
-            return response
-
-        settlement = decode_payment_response(settled)
-        # What the buyer actually signed. The writer may have changed payout address
-        # since the invoice was issued, so the database can't say where the money went.
-        signed = json.loads(base64.b64decode(request.headers["PAYMENT-SIGNATURE"]))
-        accepted = PaymentPayload.from_dict(signed).accepted
-        price_drops = int(accepted.amount)
-
-        receipt = signer.sign({
-            "article_id": article["id"],
-            "title": article["title"],
-            "content_hash": content_hash(article["body"]),
-            "license": article["license"],
-            "price_drops": price_drops,
-            "pay_to": accepted.pay_to,
-            "payer": settlement.get("payer"),
-            "network": settlement.get("network"),
-            "tx_hash": settlement.get("transaction"),
-            "explorer": config.EXPLORER_TX + str(settlement.get("transaction")),
-        })
-        db.record(
-            tx_hash=settlement.get("transaction"),
-            article_id=article["id"],
-            payer=settlement.get("payer"),
-            pay_to=accepted.pay_to,
-            price_drops=price_drops,
-            network=settlement.get("network") or config.NETWORK,
-            receipt=receipt,
-            agent=agent_name(request),
-        )
-
-        body = b"".join([chunk async for chunk in response.body_iterator])
-        data = {**json.loads(body), "receipt": receipt}
-        headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
-        return Response(json.dumps(data), status_code=200, headers=headers, media_type="application/json")
+    settlements = Settlements(db, signer)
+    rails = [XrplRail(facilitator, settlements, agent_name)]
+    app.middleware("http")(paywall(db, rails))
 
     app.add_middleware(
         CORSMiddleware,
@@ -328,6 +286,7 @@ def create_app(
         return {
             "writer": {"name": writer["name"]},
             "payout": {"method": writer["payout_method"], "xrpl_address": writer["xrpl_address"]},
+            "xrp_usd_rate": str(config.XRP_USD_RATE),
             **db.dashboard(writer["id"]),
         }
 
@@ -335,13 +294,13 @@ def create_app(
     async def create_article(
         writer: Writer,
         file: Annotated[UploadFile, File()],
-        price_xrp: Annotated[str, Form()],
+        price_usd: Annotated[str, Form()],
         title: Annotated[str, Form()] = "",
         abstract: Annotated[str, Form()] = "",
         preview_mode: Annotated[PreviewMode, Form()] = "w50",
         keywords: Annotated[str, Form()] = "",
         license: Annotated[License, Form()] = "ai-input",
-        train_price_xrp: Annotated[str, Form()] = "",
+        train_price_usd: Annotated[str, Form()] = "",
         allowed_agents: Annotated[str, Form()] = "*",
     ):
         suffix = Path(file.filename or "").suffix.lower()
@@ -373,9 +332,9 @@ def create_app(
         agents = _split_list(allowed_agents)
         if not agents:
             raise HTTPException(422, "Choose at least one agent.")
-        train_drops = None
+        train_micros = None
         if license == "ai-train":
-            train_drops = _drops_field("train_price_xrp", train_price_xrp)
+            train_micros = _usd_field("train_price_usd", train_price_usd)
 
         article_id = _unique_id(db, final_title)
         db.add_article({
@@ -386,9 +345,9 @@ def create_app(
             "body": body,
             "preview_mode": preview_mode,
             "keywords": _split_list(keywords),
-            "price_drops": _drops_field("price_xrp", price_xrp),
+            "price_usd_micros": _usd_field("price_usd", price_usd),
             "license": license,
-            "train_price_drops": train_drops,
+            "train_price_usd_micros": train_micros,
             "allowed_agents": ["*"] if "*" in agents else agents,
         })
         if storage:

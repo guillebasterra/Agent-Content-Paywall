@@ -22,12 +22,13 @@ WRITER = "rBQKgMJ6CvoLZZ13JN9gZjCxdrdQ4ii7W4"
 TX = "AB" * 32
 
 
-def article(id="cheap", xrp=0.5):
+def article(id="cheap", usd=0.5):
     return {
         "id": id,
         "title": f"Title {id}",
         "author": "A",
-        "price_drops": int(xrp * 1_000_000),
+        "price_usd_micros": int(usd * 1_000_000),
+        "price_drops": int(usd * 500_000),  # At 1 XRP = $2.
         "pay_to": WRITER,
         "license": "ai-input",
         "url": f"http://test/articles/{id}",
@@ -92,8 +93,8 @@ def sdk(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "get_balance", lambda addr, client: 90_000_000)
     monkeypatch.setenv("BUYER_SEED", SEED)
     monkeypatch.setenv("XRPL_RPC_URL", "http://rpc.invalid")
-    monkeypatch.setenv("BUYER_BUDGET_XRP", "5")
-    monkeypatch.setenv("BUYER_CONFIRM_ABOVE_XRP", "1")
+    monkeypatch.setenv("BUYER_BUDGET_USD", "5")
+    monkeypatch.setenv("BUYER_CONFIRM_ABOVE_USD", "1")
     monkeypatch.setenv("BUYER_BUDGET_FILE", str(tmp_path / "budget.json"))
     return fake
 
@@ -117,11 +118,11 @@ async def call(tool, args=None, callback=None, mode="auto"):
 
 
 async def buy(id="cheap", cap=1.0, callback=None, mode="auto"):
-    return await call("buy_article", {"id": id, "max_price_xrp": cap}, callback, mode)
+    return await call("buy_article", {"id": id, "max_price_usd": cap}, callback, mode)
 
 
 async def remaining():
-    return (await call("get_budget"))["remaining_xrp"]
+    return (await call("get_budget"))["remaining_usd"]
 
 
 @pytest.mark.anyio
@@ -130,7 +131,7 @@ async def test_purchase_spends_budget_and_verifies_receipt(sdk):
     assert result["status"] == "purchased" and result["paid"] is True
     assert result["body"] == "text of cheap"
     assert result["receipt_verified"] is True
-    assert await remaining() == "4.5"
+    assert await remaining() == "4.50"
     budget = await call("get_budget")
     assert budget["wallet_balance_xrp"] == "90"
     assert (await call("get_receipts"))["receipts"][0]["tx_hash"] == TX
@@ -139,7 +140,7 @@ async def test_purchase_spends_budget_and_verifies_receipt(sdk):
 @pytest.mark.anyio
 async def test_sdk_cap_is_the_exact_catalog_price(sdk):
     await buy(cap=1.0)
-    assert sdk.calls[0][1]["max_value"] == "500000"
+    assert sdk.calls[0][1]["max_value"] == "250000"
     assert sdk.calls[0][1]["network_filter"] == "xrpl:1"
     assert sdk.calls[0][1]["headers"] == {"X-Agent-Name": "Claude"}
 
@@ -150,7 +151,7 @@ async def test_buying_again_is_free_and_returns_saved_copy(sdk):
     again = await buy()
     assert again["status"] == "already_purchased" and again["body"] == "text of cheap"
     assert len(sdk.calls) == 1
-    assert await remaining() == "4.5"
+    assert await remaining() == "4.50"
 
 
 @pytest.mark.anyio
@@ -163,14 +164,14 @@ async def test_refuses_above_callers_max_price(sdk):
 @pytest.mark.parametrize("cap", [-1, float("nan"), float("inf")])
 async def test_refuses_invalid_max_price(sdk, cap):
     async with Client(server.mcp) as client:
-        result = await client.call_tool("buy_article", {"id": "cheap", "max_price_xrp": cap})
+        result = await client.call_tool("buy_article", {"id": "cheap", "max_price_usd": cap})
     assert not sdk.calls
     assert result.is_error or json.loads(result.content[0].text)["status"] == "rejected"
 
 
 @pytest.mark.anyio
 async def test_refuses_above_remaining_budget(sdk, monkeypatch):
-    monkeypatch.setenv("BUYER_BUDGET_XRP", "0.4")
+    monkeypatch.setenv("BUYER_BUDGET_USD", "0.4")
     result = await buy()
     assert "budget remains" in result["reason"] and not sdk.calls
 
@@ -201,7 +202,7 @@ async def test_above_threshold_pays_when_human_approves(sdk, mode):
 
     result = await buy("pricey", 3, callback, mode)
     assert result["status"] == "purchased" and len(sdk.calls) == 1
-    assert len(asked) == 1 and "Title pricey" in asked[0] and "2 XRP" in asked[0]
+    assert len(asked) == 1 and "Title pricey" in asked[0] and "$2.00" in asked[0]
 
 
 @pytest.mark.anyio
@@ -213,7 +214,7 @@ async def test_above_threshold_pays_when_human_approves(sdk, mode):
 async def test_above_threshold_refused_without_approval(sdk, callback, mode):
     result = await buy("pricey", 3, callback, mode)
     assert result["status"] == "rejected" and not sdk.calls
-    assert await remaining() == "5"
+    assert await remaining() == "5.00"
 
 
 @pytest.mark.anyio
@@ -240,8 +241,8 @@ async def test_human_is_not_asked_about_a_purchase_that_would_be_refused(sdk):
 async def test_approval_cannot_be_passed_as_a_tool_argument(sdk):
     async with Client(server.mcp) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-        assert set(tools["buy_article"].input_schema["properties"]) == {"id", "max_price_xrp"}
-        await client.call_tool("buy_article", {"id": "pricey", "max_price_xrp": 3, "approval": {"approve": True}})
+        assert set(tools["buy_article"].input_schema["properties"]) == {"id", "max_price_usd"}
+        await client.call_tool("buy_article", {"id": "pricey", "max_price_usd": 3, "approval": {"approve": True}})
     assert not sdk.calls
 
 
@@ -256,9 +257,9 @@ async def test_price_change_during_approval_reasks_for_the_new_price(sdk):
         return types.ElicitResult(action="accept", content={"approve": True})
 
     result = await buy("pricey", 3, callback)
-    assert "2 XRP" in asked[0] and "2.5 XRP" in asked[1]
+    assert "$2.00" in asked[0] and "$2.50" in asked[1]
     assert result["status"] == "purchased"
-    assert sdk.calls[0][1]["max_value"] == "2500000"
+    assert sdk.calls[0][1]["max_value"] == "1250000"
 
 
 @pytest.mark.anyio
@@ -281,7 +282,7 @@ async def test_ambiguous_outcome_holds_budget_and_blocks_retry(sdk, outcome):
     sdk.outcome = lambda url: outcome
     result = await buy()
     assert result["status"] == "outcome_unknown" and result["paid"] is None
-    assert await remaining() == "4.5"
+    assert await remaining() == "4.50"
     retry = await buy()
     assert retry["status"] == "rejected" and "pay twice" in retry["reason"]
     assert len(sdk.calls) == 1
@@ -295,7 +296,7 @@ async def test_sdk_exception_holds_budget(sdk):
 
     sdk.outcome = explode
     assert (await buy())["status"] == "outcome_unknown"
-    assert await remaining() == "4.5"
+    assert await remaining() == "4.50"
 
 
 @pytest.mark.anyio
@@ -310,7 +311,7 @@ async def test_sdk_exception_holds_budget(sdk):
 async def test_definite_failure_releases_budget_and_allows_retry(sdk, outcome):
     sdk.outcome = lambda url: outcome
     assert (await buy())["status"] == "payment_failed"
-    assert await remaining() == "5"
+    assert await remaining() == "5.00"
     sdk.outcome = None
     assert (await buy())["status"] == "purchased"
 
@@ -330,7 +331,7 @@ async def test_settled_with_unreadable_response_is_charged_and_not_rebought(sdk)
         status="success", transaction=TX, reason=None, response=SimpleNamespace(json=unreadable)
     )
     assert (await buy())["status"] == "paid_without_content"
-    assert await remaining() == "4.5"
+    assert await remaining() == "4.50"
     assert (await buy())["status"] == "paid_without_content"
     assert len(sdk.calls) == 1
 
@@ -342,7 +343,7 @@ async def test_no_payment_requested_is_not_charged(sdk):
     )
     result = await buy()
     assert result["status"] == "payment_failed" and "HTTP 403" in result["reason"]
-    assert await remaining() == "5"
+    assert await remaining() == "5.00"
 
 
 @pytest.mark.anyio
@@ -363,20 +364,20 @@ def test_receipt_for_another_purchase_is_rejected():
 async def test_corrupt_budget_file_blocks_purchase(sdk, tmp_path):
     (tmp_path / "budget.json").write_text("{not json")
     async with Client(server.mcp) as client:
-        result = await client.call_tool("buy_article", {"id": "cheap", "max_price_xrp": 1})
+        result = await client.call_tool("buy_article", {"id": "cheap", "max_price_usd": 1})
     assert result.is_error and not sdk.calls
 
 
 @pytest.mark.anyio
 async def test_parallel_buys_cannot_overspend(sdk, monkeypatch):
     """Both pass the first budget check. Only one may survive the check under the lock."""
-    monkeypatch.setenv("BUYER_BUDGET_XRP", "3")
-    monkeypatch.setenv("BUYER_CONFIRM_ABOVE_XRP", "10")
+    monkeypatch.setenv("BUYER_BUDGET_USD", "3")
+    monkeypatch.setenv("BUYER_CONFIRM_ABOVE_USD", "10")
     sdk.before_pay = lambda: time.sleep(0.1)
     results = await asyncio.gather(buy("big", 3), buy("other", 3))
     assert sorted(r["status"] for r in results) == ["purchased", "rejected"]
     assert len(sdk.calls) == 1
-    assert await remaining() == "0"
+    assert await remaining() == "0.00"
 
 
 def test_selector_refuses_wrong_recipient_or_asset():

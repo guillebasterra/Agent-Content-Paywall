@@ -1,4 +1,5 @@
 import os
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,8 +12,17 @@ NETWORK = os.getenv("XRPL_NETWORK", "xrpl:1")
 RPC_URL = os.getenv("XRPL_RPC_URL", "https://s.altnet.rippletest.net:51234")
 FACILITATOR_URL = os.getenv("XRPL_FACILITATOR_URL", "https://xrpl-facilitator-testnet.t54.ai")
 WRITER_ADDRESS = os.getenv("WRITER_ADDRESS", "")
+TREASURY_ADDRESS = os.getenv("TREASURY_ADDRESS", "")
 CONTENT_DIR = Path(os.getenv("CONTENT_DIR", ROOT / "content"))
 DB_PATH = Path(os.getenv("DATABASE_URL", "sqlite:///./tollgate.db").removeprefix("sqlite:///"))
+
+# Testnet XRP has no real value, so this rate is a placeholder. Prices are USD; drops are derived from it.
+try:
+    XRP_USD_RATE = Decimal(os.getenv("XRP_USD_RATE", "2"))
+except InvalidOperation:
+    raise RuntimeError("XRP_USD_RATE must be a number") from None
+if not XRP_USD_RATE.is_finite() or XRP_USD_RATE <= 0:
+    raise RuntimeError("XRP_USD_RATE must be positive")
 
 AUTH_MODE = os.getenv("AUTH_MODE", "demo")
 if AUTH_MODE not in {"demo", "supabase"}:

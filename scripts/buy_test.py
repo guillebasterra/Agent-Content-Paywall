@@ -43,7 +43,7 @@ def main() -> None:
     article = next(a for a in catalog if a["id"] == args.id) if args.id else catalog[0]
     writer = article["pay_to"]
 
-    print(f"buying   {article['title']}  ({article['price_xrp']} XRP)")
+    print(f"buying   {article['title']}  (${article['price_usd']} = {article['price_xrp']} XRP)")
     print(f"before   buyer {xrp(buyer.address, client)}  writer {xrp(writer, client)}")
 
     result = x402_purchase(

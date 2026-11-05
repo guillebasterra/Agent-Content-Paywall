@@ -105,7 +105,7 @@ def test_new_writer_starts_empty_and_writers_are_separate(client):
     ada, bob = bearer(token()), bearer(token(sub=OTHER, email="bob@example.com"))
     assert client.get("/me/dashboard", headers=ada).json()["pieces"] == []
     created = client.post(
-        "/articles", headers=ada, data={"title": "Ada's", "price_xrp": "1"}, files={"file": ("a.md", BODY.encode())}
+        "/articles", headers=ada, data={"title": "Ada's", "price_usd": "2"}, files={"file": ("a.md", BODY.encode())}
     )
     assert created.status_code == 201 and created.json()["author"] == "ada"
     assert len(client.get("/me/dashboard", headers=ada).json()["pieces"]) == 1
@@ -169,7 +169,7 @@ def test_original_file_goes_to_the_private_bucket(database, empty_content):
     app = storage_app(database, empty_content, handler)
     client = TestClient(app)
     response = client.post(
-        "/articles", headers=bearer(token()), data={"title": "Kept", "price_xrp": "1"},
+        "/articles", headers=bearer(token()), data={"title": "Kept", "price_usd": "2"},
         files={"file": ("my piece.md", b"---\ntitle: x\n---\nThe text")},
     )
     assert response.status_code == 201
@@ -189,7 +189,7 @@ def test_storage_failure_does_not_block_publishing(database, empty_content, fail
 
     app = storage_app(database, empty_content, handler)
     response = TestClient(app).post(
-        "/articles", headers=bearer(token()), data={"title": "Kept", "price_xrp": "1"},
+        "/articles", headers=bearer(token()), data={"title": "Kept", "price_usd": "2"},
         files={"file": ("a.md", b"The text")},
     )
     assert response.status_code == 201 and app.state.db.article("kept")["storage_path"] is None
@@ -201,11 +201,11 @@ def test_postgres_tables_are_closed_to_the_browser_key(postgres_url):
     db = Database(postgres_url)
     with db._conn() as c:
         rows = c.execute(
-            "SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ('writers', 'articles', 'purchases')"
+            "SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ('writers', 'articles', 'purchases', 'ledger_entries')"
         ).fetchall()
         policies = c.execute("SELECT COUNT(*) AS n FROM pg_policies").fetchone()["n"]
     db.close()
-    assert {r["relname"] for r in rows} == {"writers", "articles", "purchases"}
+    assert {r["relname"] for r in rows} == {"writers", "articles", "purchases", "ledger_entries"}
     assert all(r["relrowsecurity"] for r in rows) and policies == 0
     with psycopg.connect(postgres_url, autocommit=True) as admin:
         admin.execute("CREATE ROLE anon_test NOLOGIN")
@@ -245,7 +245,7 @@ def test_migration_keeps_rows_and_order(tmp_path, empty_content, postgres_url):
     with psycopg.connect(postgres_url, autocommit=True) as admin:
         admin.execute(f"CREATE DATABASE {name}")
     target = Database(postgres_url.replace("/postgres?", f"/{name}?"))
-    assert copy_rows(app.state.db, target) == {"writers": 1, "articles": 1, "purchases": 2}
+    assert copy_rows(app.state.db, target) == {"writers": 1, "articles": 1, "purchases": 2, "ledger_entries": 0}
     copy_rows(app.state.db, target)
     assert [p["agent"] for p in target.recent()] == ["Second", "First"]
     assert target.article("a-new-piece")["reads"] == 2
