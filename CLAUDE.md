@@ -27,6 +27,7 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - `make buyer` → run buyer MCP over stdio
 - `make web` → Next.js on :3000 (backend CORS only allows `http://localhost:3000`)
 - `make buyer-test` → buyer MCP spend-control tests (payment faked, no network)
+- `make demo-reset` → clear writers, articles, purchases and the buyer spend log. Keeps `.env`. Runbook in `docs/DEMO.md`
 
 ## Decisions (don't undo without asking)
 - Rail: x402 "exact" scheme on XRPL testnet (`xrpl:1`), priced in XRP drops, settled by t54 facilitator `https://xrpl-facilitator-testnet.t54.ai`. Stripe/Base is the planned production rail behind the same interface.
@@ -39,7 +40,7 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - Buyer purchases go through `x402_xrpl.clients.x402_purchase(..., max_value=<drops>)` — hard price cap.
 - Python 3.12, uv-managed per subproject.
 - Auth is a placeholder: sign-in screens are UI only and every action runs as one demo writer. Supabase Auth replaces both seams later: backend `current_writer()` and frontend `getSession()`. Until then, writer endpoints are unauthenticated, so don't expose the backend publicly.
-- Content lives in SQLite. On startup, `content/*.md` files with a new id are imported to the demo writer. Editing an imported file changes nothing, and frontmatter `author` and `pay_to` are ignored.
+- Content lives in SQLite. On startup, `content/*.md` files with a new id are imported to the demo writer. Editing an imported file changes nothing, and frontmatter `author` and `pay_to` are ignored. `content/demo/` is not imported: those are files to upload by hand, so the demo starts empty.
 - The demo writer's address comes from `WRITER_ADDRESS` once. After `make wallets ARGS=--force`, update it on `/onboarding/payout`.
 - `X-Agent-Name` is self-reported. It's recorded per purchase, and `allowed_agents` is checked against it (403 before any payment), so this is an honor system, not access control. Buyer MCP sends `BUYER_AGENT_NAME` (default `Claude`).
 - Free previews are capped at half the article, so "first 100 words" can't give away a short piece. The rule is in `preview_text` and mirrored in `web/app/upload/form.tsx`.
@@ -50,6 +51,7 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - `max_value` passed to the SDK is the exact catalog price the budget and approval covered, and the selector also pins asset and `pay_to`.
 - A budget entry is written before payment. Ambiguous outcomes (`settlement_unknown`, HTTP errors after paying) stay held and block retries until a human edits `budget.json`.
 - Re-buying an owned article returns the saved copy for free.
+- Catalog search matches any word of the query, so an agent's natural phrasing finds the piece.
 
 ## Rules
 - Never commit `.env` (holds wallet seeds + RECEIPT_SIGNING_KEY). Never print seeds.

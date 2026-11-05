@@ -337,7 +337,7 @@ async def browse_catalog(query: str = "") -> dict:
     """List articles for sale, free of charge, with abstracts and prices.
 
     Args:
-        query: Optional text matched as one phrase against title, abstract and tags.
+        query: Optional words. An article matches if its title, abstract, author or tags contain any of them.
     """
     cfg = config()
     try:

@@ -95,8 +95,9 @@ def listing(article: dict) -> dict:
 
 
 def _matches(item: dict, query: str) -> bool:
-    text = " ".join([item["title"], item["abstract"], item["author"], *item["keywords"]])
-    return query.casefold() in text.casefold()
+    """Any word of the query counts, so an agent's natural phrasing still finds the piece."""
+    text = " ".join([item["title"], item["abstract"], item["author"], *item["keywords"]]).casefold()
+    return any(word in text for word in query.casefold().split())
 
 
 def _split_list(value: str) -> list[str]:
