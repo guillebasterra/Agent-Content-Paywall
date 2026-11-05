@@ -1,6 +1,8 @@
 """Toll Gate buyer MCP: lets an agent browse and buy articles within a hard budget.
 
-The wallet seed stays in this process. It is never returned by a tool.
+Pays over XRPL or from Stripe-funded credit, by BUYER_RAIL. The budget, approval and
+hold-on-ambiguity rules are the same on both. The wallet seed and API key stay in this
+process and are never returned by a tool.
 """
 
 import asyncio
@@ -14,7 +16,7 @@ from pathlib import Path
 from typing import Annotated
 
 import httpx
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 from mcp.server.mcpserver import AcceptedElicitation, Context, Elicit, ElicitationResult, MCPServer, Resolve
 from nacl.encoding import HexEncoder
 from nacl.signing import VerifyKey
@@ -29,6 +31,10 @@ from .budget import HELD, PAID, PENDING, UNKNOWN, BudgetBook, find, total
 
 ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / ".env")
+
+RAILS = ("xrpl", "stripe")
+# Answers on the Stripe rail that mean the read was refused and nothing was debited.
+STRIPE_REFUSALS = {400, 401, 402, 403, 404, 409, 422}
 
 MICROS_PER_USD = 1_000_000
 UNTRUSTED_NOTICE = (
@@ -54,6 +60,16 @@ class Config:
     budget_micros: int
     confirm_above_micros: int
     book: BudgetBook
+    rail: str
+
+
+def current_rail() -> str:
+    """Read from the file on every call, so `make rail` takes effect without restarting the client."""
+    env_file = os.getenv("BUYER_ENV_FILE", str(ROOT / ".env"))
+    rail = dotenv_values(env_file).get("BUYER_RAIL") or os.getenv("BUYER_RAIL") or "xrpl"
+    if rail not in RAILS:
+        raise ValueError(f"BUYER_RAIL must be one of {RAILS}")
+    return rail
 
 
 def config() -> Config:
@@ -65,6 +81,7 @@ def config() -> Config:
         budget_micros=to_micros(os.getenv("BUYER_BUDGET_USD", "5")),
         confirm_above_micros=to_micros(os.getenv("BUYER_CONFIRM_ABOVE_USD", "1")),
         book=BudgetBook(Path(os.getenv("BUYER_BUDGET_FILE", default_path))),
+        rail=current_rail(),
     )
 
 
@@ -102,7 +119,16 @@ def fetch_receipt_key(cfg: Config) -> str:
     return response.json()["public_key"]
 
 
-def receipt_is_valid(receipt: dict, key_hex: str, article: dict, tx_hash: str) -> bool:
+def fetch_credit(cfg: Config, key: str) -> str | None:
+    response = httpx.get(f"{cfg.api_url}/agents/me", headers={"Authorization": f"Bearer {key}"}, timeout=15)
+    return response.json()["credit_usd"] if response.status_code == 200 else None
+
+
+def stripe_read(url: str, headers: dict) -> httpx.Response:
+    return httpx.get(url, headers=headers, timeout=60)
+
+
+def receipt_is_valid(receipt: dict, key_hex: str, article: dict, tx_hash: str, rail: str = "xrpl") -> bool:
     """The signature is genuine and it describes this purchase."""
     try:
         payload = receipt["payload"]
@@ -110,6 +136,13 @@ def receipt_is_valid(receipt: dict, key_hex: str, article: dict, tx_hash: str) -
         VerifyKey(key_hex, encoder=HexEncoder).verify(canonical, base64.b64decode(receipt["signature"]))
     except Exception:
         return False
+    if rail == "stripe":
+        return (
+            payload.get("rail") == "stripe"
+            and payload.get("article_id") == article["id"]
+            and payload.get("stripe_ref") == tx_hash
+            and payload.get("amount_usd") == to_usd(article["price_usd_micros"])
+        )
     return (
         payload.get("article_id") == article["id"]
         and payload.get("tx_hash") == tx_hash
@@ -205,7 +238,7 @@ def settle(cfg: Config, article: dict, tx_hash: str, response, entries: list[dic
         }
 
     try:
-        verified = receipt_is_valid(receipt, fetch_receipt_key(cfg), article, tx_hash)
+        verified = receipt_is_valid(receipt, fetch_receipt_key(cfg), article, tx_hash, cfg.rail)
     except Exception:
         verified = False
     entry.update(
@@ -218,13 +251,14 @@ def settle(cfg: Config, article: dict, tx_hash: str, response, entries: list[dic
     return {
         "status": "purchased",
         "paid": True,
+        "rail": cfg.rail,
         "article_id": article["id"],
         "title": article["title"],
         "author": article.get("author"),
         "license": article.get("license"),
         "price_usd": to_usd(article["price_usd_micros"]),
         "remaining_usd": to_usd(remaining_micros(cfg, entries)),
-        "tx_hash": tx_hash,
+        "tx_hash" if cfg.rail == "xrpl" else "stripe_ref": tx_hash,
         "explorer": entry["explorer"],
         "receipt_verified": verified,
         "receipt": receipt,
@@ -234,18 +268,11 @@ def settle(cfg: Config, article: dict, tx_hash: str, response, entries: list[dic
 
 
 def execute_purchase(cfg: Config, article: dict, cap_micros: int) -> dict:
-    """Pay under the budget lock. Runs in a worker thread because the SDK blocks."""
-    seed = os.getenv("BUYER_SEED", "")
-    if not seed:
-        return rejected("The buyer wallet is not configured. Run `make wallets`.")
-
-    try:
-        wallet = Wallet.from_seed(seed)
-    except Exception:
-        return rejected("The buyer wallet seed is invalid. Run `make wallets`.")
-
-    def clean(text: object) -> str:
-        return str(text).replace(seed, "[redacted]")
+    """Pay under the budget lock. Runs in a worker thread because payment blocks."""
+    pay = pay_with_stripe if cfg.rail == "stripe" else pay_with_xrpl
+    credentials = pay.prepare()
+    if isinstance(credentials, dict):
+        return credentials
 
     with cfg.book.lock():
         entries = cfg.book.load()
@@ -258,6 +285,7 @@ def execute_purchase(cfg: Config, article: dict, cap_micros: int) -> dict:
         entry = {
             "article_id": article["id"],
             "title": article["title"],
+            "rail": cfg.rail,
             "price_usd_micros": article["price_usd_micros"],
             "price_drops": article["price_drops"],
             "pay_to": article["pay_to"],
@@ -267,46 +295,119 @@ def execute_purchase(cfg: Config, article: dict, cap_micros: int) -> dict:
         }
         entries.append(entry)
         cfg.book.save(entries)
+        return pay(cfg, article, credentials, entries, entry)
 
-        def hold_as_unknown(reason: str, tx_hash: str | None) -> dict:
-            entry.update(status=UNKNOWN, tx_hash=tx_hash, reason=reason)
-            cfg.book.save(entries)
-            return {
-                "status": "outcome_unknown",
-                "paid": None,
-                "reason": f"The payment may have settled ({reason}). The budget stays held. Do not retry.",
-                "tx_hash": tx_hash,
-            }
 
-        try:
-            result = x402_purchase(
-                article["url"],
-                wallet=wallet,
-                rpc_url=cfg.rpc_url,
-                network_filter=cfg.network,
-                # The exact catalog price the budget and any human approval covered.
-                max_value=str(article["price_drops"]),
-                payment_requirements_selector=payment_selector(article),
-                headers={"X-Agent-Name": os.getenv("BUYER_AGENT_NAME", "Claude")},
-                timeout=180,
-            )
-        except Exception as exc:
-            return hold_as_unknown(f"unexpected {type(exc).__name__}", None)
+def hold_as_unknown(cfg: Config, entries: list[dict], entry: dict, reason: str, tx_hash: str | None) -> dict:
+    entry.update(status=UNKNOWN, tx_hash=tx_hash, reason=reason)
+    cfg.book.save(entries)
+    return {
+        "status": "outcome_unknown",
+        "paid": None,
+        "reason": f"The payment may have settled ({reason}). The budget stays held. Do not retry.",
+        "tx_hash": tx_hash,
+    }
 
-        reason = clean(result.reason or "")
-        if result.status == "success" and result.transaction:
-            return settle(cfg, article, result.transaction, result.response, entries, entry)
-        if result.status == "settlement_unknown" or reason.startswith("http_"):
-            return hold_as_unknown(reason or result.status, result.transaction)
 
-        # Nothing was charged: the server asked for no payment, or refused or failed it.
-        entries.remove(entry)
-        cfg.book.save(entries)
-        if result.status == "success":
-            # The SDK reports any first response other than 402 as success, including a 403.
-            status = getattr(result.response, "status_code", "unknown")
-            reason = f"No payment was made. The server answered HTTP {status} instead of asking for payment."
-        return {"status": "payment_failed", "paid": False, "sdk_status": result.status, "reason": reason}
+def release(cfg: Config, entries: list[dict], entry: dict) -> None:
+    """Nothing was charged, so the budget entry goes away."""
+    entries.remove(entry)
+    cfg.book.save(entries)
+
+
+def _prepare_xrpl() -> "Wallet | dict":
+    seed = os.getenv("BUYER_SEED", "")
+    if not seed:
+        return rejected("The buyer wallet is not configured. Run `make wallets`.")
+    try:
+        return Wallet.from_seed(seed)
+    except Exception:
+        return rejected("The buyer wallet seed is invalid. Run `make wallets`.")
+
+
+def pay_with_xrpl(cfg: Config, article: dict, wallet: Wallet, entries: list[dict], entry: dict) -> dict:
+    def clean(text: object) -> str:
+        return str(text).replace(os.getenv("BUYER_SEED", ""), "[redacted]")
+
+    try:
+        result = x402_purchase(
+            article["url"],
+            wallet=wallet,
+            rpc_url=cfg.rpc_url,
+            network_filter=cfg.network,
+            # The exact catalog price the budget and any human approval covered.
+            max_value=str(article["price_drops"]),
+            payment_requirements_selector=payment_selector(article),
+            headers={"X-Agent-Name": os.getenv("BUYER_AGENT_NAME", "Claude")},
+            timeout=180,
+        )
+    except Exception as exc:
+        return hold_as_unknown(cfg, entries, entry, f"unexpected {type(exc).__name__}", None)
+
+    reason = clean(result.reason or "")
+    if result.status == "success" and result.transaction:
+        return settle(cfg, article, result.transaction, result.response, entries, entry)
+    if result.status == "settlement_unknown" or reason.startswith("http_"):
+        return hold_as_unknown(cfg, entries, entry, reason or result.status, result.transaction)
+
+    # Nothing was charged: the server asked for no payment, or refused or failed it.
+    release(cfg, entries, entry)
+    if result.status == "success":
+        # The SDK reports any first response other than 402 as success, including a 403.
+        status = getattr(result.response, "status_code", "unknown")
+        reason = f"No payment was made. The server answered HTTP {status} instead of asking for payment."
+    return {"status": "payment_failed", "paid": False, "sdk_status": result.status, "reason": reason}
+
+
+pay_with_xrpl.prepare = _prepare_xrpl
+
+
+def _prepare_stripe() -> "str | dict":
+    key = os.getenv("BUYER_STRIPE_API_KEY", "")
+    return key or rejected("The agent account is not configured. Run `make agent`.")
+
+
+def _stripe_refusal(response: httpx.Response) -> str:
+    try:
+        data = response.json()
+    except ValueError:
+        data = {}
+    if data.get("error") == "insufficient_credit":
+        return (
+            f"The agent's prepaid credit is ${data.get('credit_usd')} and the price is ${data.get('price_usd')}. "
+            "Nothing was charged. Ask the human to top up with `make topup`."
+        )
+    return f"Nothing was charged. The server answered HTTP {response.status_code}: {data.get('error', 'refused')}."
+
+
+def pay_with_stripe(cfg: Config, article: dict, key: str, entries: list[dict], entry: dict) -> dict:
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "X-Agent-Name": os.getenv("BUYER_AGENT_NAME", "Claude"),
+        # The exact catalog price the budget and any human approval covered.
+        "X-Max-Price-Usd": to_usd(article["price_usd_micros"]),
+    }
+    try:
+        response = stripe_read(article["url"], headers)
+    except httpx.ConnectError:
+        release(cfg, entries, entry)  # The request never reached the server.
+        return {"status": "payment_failed", "paid": False, "reason": "The Toll Gate server can't be reached."}
+    except Exception as exc:
+        return hold_as_unknown(cfg, entries, entry, f"unexpected {type(exc).__name__}", None)
+
+    if response.status_code in STRIPE_REFUSALS:
+        release(cfg, entries, entry)
+        return {"status": "payment_failed", "paid": False, "reason": _stripe_refusal(response)}
+    if response.status_code != 200:
+        return hold_as_unknown(cfg, entries, entry, f"http_{response.status_code}", None)
+    try:
+        ref = response.json()["receipt"]["payload"]["stripe_ref"]
+    except Exception:
+        ref = None
+    return settle(cfg, article, ref, response, entries, entry)
+
+
+pay_with_stripe.prepare = _prepare_stripe
 
 
 # --- tools ------------------------------------------------------------------
@@ -317,22 +418,27 @@ def get_budget() -> dict:
     """Show the spending budget, what has been spent, and what remains, in US dollars."""
     cfg = config()
     entries = cfg.book.load()
-    try:
-        address = os.getenv("BUYER_ADDRESS") or Wallet.from_seed(os.environ["BUYER_SEED"]).address
-        balance = format(Decimal(int(get_balance(address, JsonRpcClient(cfg.rpc_url)))) / 1_000_000, "f")
-    except Exception:
-        address, balance = os.getenv("BUYER_ADDRESS"), None
-    return {
+    summary = {
         "budget_usd": to_usd(cfg.budget_micros),
         "spent_usd": to_usd(total(entries, (PAID,))),
         "held_unresolved_usd": to_usd(total(entries, HELD)),
         "remaining_usd": to_usd(remaining_micros(cfg, entries)),
         "human_approval_above_usd": to_usd(cfg.confirm_above_micros),
         "articles_purchased": sum(e["status"] == PAID for e in entries),
-        "wallet_address": address,
-        "wallet_balance_xrp": balance,
-        "network": cfg.network,
+        "rail": cfg.rail,
     }
+    if cfg.rail == "stripe":
+        try:
+            summary["prepaid_credit_usd"] = fetch_credit(cfg, os.getenv("BUYER_STRIPE_API_KEY", ""))
+        except Exception:
+            summary["prepaid_credit_usd"] = None
+        return summary
+    try:
+        address = os.getenv("BUYER_ADDRESS") or Wallet.from_seed(os.environ["BUYER_SEED"]).address
+        balance = format(Decimal(int(get_balance(address, JsonRpcClient(cfg.rpc_url)))) / 1_000_000, "f")
+    except Exception:
+        address, balance = os.getenv("BUYER_ADDRESS"), None
+    return {**summary, "wallet_address": address, "wallet_balance_xrp": balance, "network": cfg.network}
 
 
 @mcp.tool()
@@ -450,7 +556,7 @@ async def buy_article(
 def get_receipts() -> dict:
     """List purchases with signed receipts and explorer links, plus any unresolved payments."""
     entries = config().book.load()
-    fields = ("article_id", "title", "price_usd_micros", "at", "tx_hash", "explorer", "receipt_verified", "receipt")
+    fields = ("article_id", "title", "rail", "price_usd_micros", "at", "tx_hash", "explorer", "receipt_verified", "receipt")
     return {
         "receipts": [{k: e.get(k) for k in fields} for e in entries if e["status"] == PAID],
         "unresolved": [

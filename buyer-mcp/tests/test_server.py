@@ -7,6 +7,7 @@ import threading
 import time
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from mcp import Client, types
 from nacl.encoding import HexEncoder
@@ -17,6 +18,7 @@ from buyer_mcp import server
 from buyer_mcp.budget import BudgetBook
 
 SEED = Wallet.create().seed
+API_KEY = "tg_test_secretsecretsecret"
 KEY = SigningKey.generate()
 WRITER = "rBQKgMJ6CvoLZZ13JN9gZjCxdrdQ4ii7W4"
 TX = "AB" * 32
@@ -96,6 +98,9 @@ def sdk(monkeypatch, tmp_path):
     monkeypatch.setenv("BUYER_BUDGET_USD", "5")
     monkeypatch.setenv("BUYER_CONFIRM_ABOVE_USD", "1")
     monkeypatch.setenv("BUYER_BUDGET_FILE", str(tmp_path / "budget.json"))
+    monkeypatch.setenv("BUYER_ENV_FILE", str(tmp_path / "no.env"))
+    monkeypatch.setenv("BUYER_RAIL", "xrpl")
+    monkeypatch.setenv("BUYER_STRIPE_API_KEY", API_KEY)
     return fake
 
 
@@ -113,7 +118,7 @@ async def call(tool, args=None, callback=None, mode="auto"):
     assert not result.is_error, result.content
     text = result.content[0].text
     # The seed must never reach the model, in any tool's output.
-    assert SEED not in text
+    assert SEED not in text and API_KEY not in text
     return json.loads(text)
 
 
@@ -388,6 +393,172 @@ def test_selector_refuses_wrong_recipient_or_asset():
     for bad in ({**good, "payTo": "rEvil"}, {**good, "asset": "USD"}, {**good, "amount": "500001"}):
         with pytest.raises(ValueError):
             select([bad], "xrpl:1", "exact", "500000")
+
+
+def stripe_receipt(a, ref="credit_1", amount=None):
+    payload = {"rail": "stripe", "article_id": a["id"], "stripe_ref": ref, "amount_usd": amount or server.to_usd(a["price_usd_micros"])}
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return {"payload": payload, "signature": base64.b64encode(KEY.sign(canonical).signature).decode(), "alg": "ed25519"}
+
+
+@pytest.fixture
+def stripe_api(sdk, monkeypatch):
+    """Stands in for GET /articles/{id} with an agent key. sdk is there to catch any XRPL payment."""
+    monkeypatch.setenv("BUYER_RAIL", "stripe")
+    fake = SimpleNamespace(calls=[], answer=None)
+
+    def read(url, headers):
+        fake.calls.append((url, headers))
+        if fake.answer:
+            return fake.answer(url)
+        a = next(a for a in CATALOG if a["url"] == url)
+        return httpx.Response(200, json={"body": f"text of {a['id']}", "receipt": stripe_receipt(a)})
+
+    monkeypatch.setattr(server, "stripe_read", read)
+    monkeypatch.setattr(server, "fetch_credit", lambda cfg, key: "9.60")
+    return fake
+
+
+@pytest.mark.anyio
+async def test_stripe_rail_buys_from_credit_and_never_touches_the_wallet(sdk, stripe_api):
+    result = await buy()
+    assert result["status"] == "purchased" and result["rail"] == "stripe"
+    assert result["body"] == "text of cheap" and result["receipt_verified"] is True
+    assert result["stripe_ref"] == "credit_1" and result["explorer"] is None and "tx_hash" not in result
+    assert not sdk.calls
+    assert await remaining() == "4.50"
+    _, headers = stripe_api.calls[0]
+    assert headers["Authorization"] == f"Bearer {API_KEY}" and headers["X-Max-Price-Usd"] == "0.50"
+    assert headers["X-Agent-Name"] == "Claude"
+
+
+@pytest.mark.anyio
+async def test_stripe_budget_shows_credit_not_the_wallet(stripe_api):
+    budget = await call("get_budget")
+    assert budget["rail"] == "stripe" and budget["prepaid_credit_usd"] == "9.60" and "wallet_address" not in budget
+
+
+@pytest.mark.anyio
+async def test_one_budget_covers_both_rails(sdk, stripe_api, monkeypatch):
+    await buy()
+    monkeypatch.setenv("BUYER_RAIL", "xrpl")
+    CATALOG.append(article("second", 1))
+    assert (await buy("second", 1))["rail"] == "xrpl"
+    assert await remaining() == "3.50"
+    assert len(stripe_api.calls) == 1 and len(sdk.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_article_owned_on_one_rail_is_free_on_the_other(sdk, stripe_api, monkeypatch):
+    await buy()
+    monkeypatch.setenv("BUYER_RAIL", "xrpl")
+    assert (await buy())["status"] == "already_purchased" and not sdk.calls
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("mode", MODES)
+async def test_stripe_rail_also_needs_approval_above_the_threshold(stripe_api, mode):
+    result = await buy("pricey", 3, mode=mode)
+    assert result["status"] == "rejected" and "human approval" in result["reason"] and not stripe_api.calls
+    approved = await buy("pricey", 3, approve_with(), mode)
+    assert approved["status"] == "purchased" and len(stripe_api.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_stripe_rail_refuses_above_budget_and_cap(stripe_api, monkeypatch):
+    assert (await buy(cap=0.4))["status"] == "rejected"
+    monkeypatch.setenv("BUYER_BUDGET_USD", "0.4")
+    assert "budget remains" in (await buy())["reason"]
+    assert not stripe_api.calls
+
+
+@pytest.mark.anyio
+async def test_low_credit_releases_the_budget_and_says_to_top_up(stripe_api):
+    stripe_api.answer = lambda url: httpx.Response(
+        402, json={"error": "insufficient_credit", "credit_usd": "0.10", "price_usd": "0.50"}
+    )
+    result = await buy()
+    assert result["status"] == "payment_failed" and result["paid"] is False and "make topup" in result["reason"]
+    assert await remaining() == "5.00"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("code", [401, 403, 404, 409])
+async def test_stripe_refusals_release_the_budget_and_allow_retry(stripe_api, code):
+    stripe_api.answer = lambda url: httpx.Response(code, json={"error": "refused"})
+    assert (await buy())["status"] == "payment_failed"
+    assert await remaining() == "5.00"
+    stripe_api.answer = None
+    assert (await buy())["status"] == "purchased"
+
+
+@pytest.mark.anyio
+async def test_stripe_server_error_holds_budget_and_blocks_retry(stripe_api):
+    stripe_api.answer = lambda url: httpx.Response(500)
+    assert (await buy())["status"] == "outcome_unknown"
+    assert await remaining() == "4.50"
+    assert (await buy())["status"] == "rejected" and len(stripe_api.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_stripe_timeout_holds_budget_because_the_debit_may_have_happened(stripe_api):
+    def slow(url):
+        raise httpx.ReadTimeout("slow")
+
+    stripe_api.answer = slow
+    assert (await buy())["status"] == "outcome_unknown"
+    assert await remaining() == "4.50"
+
+
+@pytest.mark.anyio
+async def test_stripe_connection_refused_releases_budget(stripe_api):
+    def down(url):
+        raise httpx.ConnectError("refused")
+
+    stripe_api.answer = down
+    assert (await buy())["status"] == "payment_failed"
+    assert await remaining() == "5.00"
+
+
+@pytest.mark.anyio
+async def test_stripe_unreadable_success_is_charged_and_not_rebought(stripe_api):
+    stripe_api.answer = lambda url: httpx.Response(200, content=b"not json")
+    assert (await buy())["status"] == "paid_without_content"
+    assert await remaining() == "4.50"
+    assert (await buy())["status"] == "paid_without_content" and len(stripe_api.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_stripe_forged_receipt_is_flagged(stripe_api, monkeypatch):
+    monkeypatch.setattr(server, "fetch_receipt_key", lambda cfg: SigningKey.generate().verify_key.encode(HexEncoder).decode())
+    assert (await buy())["receipt_verified"] is False
+
+
+def test_stripe_receipt_for_another_read_or_price_is_rejected():
+    a = article()
+    key = KEY.verify_key.encode(HexEncoder).decode()
+    assert server.receipt_is_valid(stripe_receipt(a), key, a, "credit_1", "stripe") is True
+    assert server.receipt_is_valid(stripe_receipt(a, ref="credit_2"), key, a, "credit_1", "stripe") is False
+    assert server.receipt_is_valid(stripe_receipt(a, amount="9.99"), key, a, "credit_1", "stripe") is False
+    assert server.receipt_is_valid(signed_receipt(a), key, a, TX, "stripe") is False
+
+
+@pytest.mark.anyio
+async def test_missing_agent_key_is_refused_without_a_request(stripe_api, monkeypatch):
+    monkeypatch.setenv("BUYER_STRIPE_API_KEY", "")
+    assert "make agent" in (await buy())["reason"] and not stripe_api.calls
+
+
+def test_rail_file_wins_over_the_process_and_switches_live(tmp_path, monkeypatch):
+    env_file = tmp_path / "x.env"
+    monkeypatch.setenv("BUYER_ENV_FILE", str(env_file))
+    monkeypatch.setenv("BUYER_RAIL", "xrpl")
+    assert server.current_rail() == "xrpl"
+    env_file.write_text("BUYER_RAIL=stripe\n")
+    assert server.current_rail() == "stripe"
+    env_file.write_text("BUYER_RAIL=paypal\n")
+    with pytest.raises(ValueError):
+        server.current_rail()
 
 
 def test_budget_file_lock_excludes_other_holders(tmp_path):
