@@ -32,6 +32,7 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - `make buyer-test` → buyer MCP spend-control tests (payment faked, no network)
 - `make supabase-setup` → schema, private bucket, checks the browser key reads nothing. `make migrate-db` copies SQLite rows to Postgres
 - `make agent` buyer's agent account, key to `.env` · `make topup ARGS="--usd 10"` Checkout link · `make stripe-listen` webhook forwarding · `make payout` test Transfers
+- `make rail RAIL=stripe|xrpl` → switches the buyer MCP live
 - `make demo-otp EMAIL=` → prints a sign-in code without sending an email
 - `make demo-reset` → clear writers, articles, purchases and the buyer spend log. Keeps `.env`. Runbook in `docs/DEMO.md`
 
@@ -50,7 +51,7 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - Settlement info (tx hash) only exists after the handler runs, so `XrplRail` decodes `PAYMENT-RESPONSE` after the SDK returns, signs the receipt, records it, and injects `receipt` into the JSON body. Price and `pay_to` in the receipt come from the signed payment, not the DB, because a writer can change address between invoice and payment.
 - XRPL payments go straight to the writer's address. A writer with no address is paid through `TREASURY_ADDRESS` and credited in `ledger_entries`. This is where the platform starts holding money, so custodial balances need legal review before real funds.
 - `buyer-mcp` uses `mcp>=2` (class is `MCPServer` from `mcp.server.mcpserver`, not FastMCP) plus `x402-xrpl`, with `override-dependencies = ["uvicorn>=0.31.1"]` because x402-xrpl pins uvicorn<0.31.
-- Buyer purchases go through `x402_xrpl.clients.x402_purchase(..., max_value=<drops>)` — hard price cap.
+- XRPL purchases go through `x402_xrpl.clients.x402_purchase(..., max_value=<drops>)` — hard price cap.
 - Python 3.12, uv-managed per subproject.
 - `AUTH_MODE=demo|supabase`. Demo keeps one placeholder writer on SQLite with unauthenticated writer routes, so don't expose it publicly. Supabase uses email codes and Postgres.
 - ES256/RS256 tokens are verified locally against JWKS. HS256 tokens go to `/auth/v1/user`, as Supabase recommends. No JWT secret is stored, so a token can't pick a weaker check.
@@ -67,7 +68,8 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - Human approval above `BUYER_CONFIRM_ABOVE_USD` uses `Resolve`/`Elicit`, never `ctx.elicit` (fails on protocol 2026-07-28, which Claude Code speaks) and never a tool argument (the model could self-approve). It fails closed.
 - `max_value` passed to the SDK is the exact catalog price the budget and approval covered, and the selector also pins asset and `pay_to`.
 - A budget entry is written before payment. Ambiguous outcomes (`settlement_unknown`, HTTP errors after paying) stay held and block retries until a human edits `budget.json`.
-- Re-buying an owned article returns the saved copy for free.
+- Re-buying an owned article returns the saved copy for free, on either rail.
+- `BUYER_RAIL` is read from `.env` on every call, and the file wins over the process env, so don't set it in the Claude Desktop config. On the Stripe rail, connection refused and HTTP refusals release the budget; timeouts and 5xx stay held.
 - Catalog search matches any word of the query, so an agent's natural phrasing finds the piece.
 
 ## Rules

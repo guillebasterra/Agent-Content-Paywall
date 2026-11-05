@@ -1,4 +1,4 @@
-.PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset demo-otp supabase-setup migrate-db agent topup payout stripe-listen
+.PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset demo-otp supabase-setup migrate-db agent topup payout stripe-listen rail
 
 server:
 	cd server && uv run uvicorn app.main:app --reload --port 8000
@@ -48,3 +48,8 @@ stripe-listen:
 	secret=$$(stripe listen --api-key "$$STRIPE_SECRET_KEY" --print-secret); \
 	cd server && uv run python -c "import sys; sys.path.insert(0, '../scripts'); from pathlib import Path; from create_wallets import write_env; write_env(Path('../.env'), {'STRIPE_WEBHOOK_SECRET': '$$secret'})"; cd ..; \
 	stripe listen --api-key "$$STRIPE_SECRET_KEY" --forward-to localhost:8000/webhooks/stripe
+
+# make rail RAIL=stripe  (or xrpl). The buyer MCP picks it up on its next call, no restart needed.
+rail:
+	cd server && uv run python -c "import sys; sys.path.insert(0, '../scripts'); from pathlib import Path; from create_wallets import write_env; write_env(Path('../.env'), {'BUYER_RAIL': '$(RAIL)'})"
+	@echo "buyer rail: $(RAIL)"
