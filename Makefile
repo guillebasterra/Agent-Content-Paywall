@@ -1,4 +1,4 @@
-.PHONY: server server-test buyer buyer-test web wallets buy-test
+.PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset
 
 server:
 	cd server && uv run uvicorn app.main:app --reload --port 8000
@@ -20,3 +20,6 @@ wallets:
 
 buy-test:
 	cd server && uv run python ../scripts/buy_test.py $(ARGS)
+
+demo-reset:
+	cd server && uv run python ../scripts/demo_reset.py

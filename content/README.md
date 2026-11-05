@@ -18,3 +18,5 @@ allowed_agents: ["*"]    # optional: agent names, or "*" for all
 Body below the frontmatter is the paid content.
 
 On startup, files with a new id are imported into SQLite and belong to the demo writer. Editing an imported file changes nothing. Writers can also publish from `/upload`.
+
+`demo/` is not imported. It holds files to upload by hand during the demo, so the dashboard and catalog start empty.
