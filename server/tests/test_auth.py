@@ -201,11 +201,11 @@ def test_postgres_tables_are_closed_to_the_browser_key(postgres_url):
     db = Database(postgres_url)
     with db._conn() as c:
         rows = c.execute(
-            "SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ('writers', 'articles', 'purchases', 'ledger_entries')"
+            "SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ('writers', 'articles', 'agents', 'purchases', 'ledger_entries')"
         ).fetchall()
         policies = c.execute("SELECT COUNT(*) AS n FROM pg_policies").fetchone()["n"]
     db.close()
-    assert {r["relname"] for r in rows} == {"writers", "articles", "purchases", "ledger_entries"}
+    assert {r["relname"] for r in rows} == {"writers", "articles", "agents", "purchases", "ledger_entries"}
     assert all(r["relrowsecurity"] for r in rows) and policies == 0
     with psycopg.connect(postgres_url, autocommit=True) as admin:
         admin.execute("CREATE ROLE anon_test NOLOGIN")
@@ -245,7 +245,7 @@ def test_migration_keeps_rows_and_order(tmp_path, empty_content, postgres_url):
     with psycopg.connect(postgres_url, autocommit=True) as admin:
         admin.execute(f"CREATE DATABASE {name}")
     target = Database(postgres_url.replace("/postgres?", f"/{name}?"))
-    assert copy_rows(app.state.db, target) == {"writers": 1, "articles": 1, "purchases": 2, "ledger_entries": 0}
+    assert copy_rows(app.state.db, target) == {"writers": 1, "articles": 1, "agents": 0, "purchases": 2, "ledger_entries": 0}
     copy_rows(app.state.db, target)
     assert [p["agent"] for p in target.recent()] == ["Second", "First"]
     assert target.article("a-new-piece")["reads"] == 2

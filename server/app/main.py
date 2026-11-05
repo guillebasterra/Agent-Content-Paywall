@@ -1,8 +1,10 @@
 """Toll Gate API.
 
 Free:   GET /catalog, GET /ledger, GET /llms.txt, GET /.well-known/tollgate-receipt-key
-Paid:   GET /articles/{id}  (x402 over XRPL; payment goes straight to the writer)
-Writer: GET/PUT /me/payout, PUT /me/profile, GET /me/dashboard, POST /articles
+Paid:   GET /articles/{id}  (x402 over XRPL, or prepaid credit with an agent key)
+Writer: GET/PUT /me/payout, PUT /me/profile, GET /me/dashboard, POST /articles, POST /me/stripe/*
+Agent:  POST /agents, GET /agents/me, POST /agents/me/topups
+Stripe: POST /webhooks/stripe, GET /agents/topup/done
 """
 
 import logging
@@ -11,7 +13,9 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import frontmatter
+import stripe
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
@@ -23,14 +27,19 @@ from .content import content_hash, format_usd, preview_text, seed_articles, slug
 from .db import Database
 from .paywall import agent_name, paywall
 from .rails.settle import Settlements
+from .rails.stripe_credit import StripeCreditRail, bearer_key, hash_key, new_api_key
 from .rails.xrpl import XrplRail, pay_to_address
 from .receipts import ReceiptSigner
 from .session import DEMO_WRITER_EMAIL, DEMO_WRITER_ID, DEMO_WRITER_NAME, DemoAuth, SupabaseAuth, current_writer
 from .storage import SupabaseStorage
+from .stripe_gateway import StripeGateway
 
 log = logging.getLogger("tollgate")
 
 MAX_UPLOAD_BYTES = 2_000_000
+MIN_TOPUP_MICROS = 1_000_000
+MAX_TOPUP_MICROS = 500_000_000
+MICROS_PER_CENT = 10_000
 TEXT_UPLOADS = {".md", ".txt"}
 UNSUPPORTED_UPLOADS = "Only .md and .txt files can be uploaded for now."
 LICENSES = {
@@ -45,6 +54,14 @@ Writer = Annotated[dict, Depends(current_writer)]
 
 class ProfileUpdate(BaseModel):
     name: str
+
+
+class AgentCreate(BaseModel):
+    name: str
+
+
+class TopUp(BaseModel):
+    amount_usd: str
 
 
 class PayoutUpdate(BaseModel):
@@ -99,6 +116,14 @@ def listing(article: dict) -> dict:
     }
 
 
+def _stripe_status(writer: dict, gateway: StripeGateway | None) -> dict:
+    return {
+        "available": gateway is not None,
+        "connected": bool(writer["stripe_details_submitted"]),
+        "payouts_enabled": bool(writer["stripe_payouts_enabled"]),
+    }
+
+
 def _matches(item: dict, query: str) -> bool:
     """Any word of the query counts, so an agent's natural phrasing still finds the piece."""
     text = " ".join([item["title"], item["abstract"], item["author"], *item["keywords"]]).casefold()
@@ -150,6 +175,17 @@ The payment goes directly to the writer, or to a platform treasury that credits 
 The x402-xrpl Python SDK does steps 2 to 4: x402_xrpl.clients.x402_purchase(url, wallet=..., max_value=<drops>).
 A 403 means the writer does not sell this article to your agent. Check allowed_agents in the catalog first.
 
+## Buy with prepaid credit (stripe-credit, test mode)
+
+For agents that don't hold crypto. The 402 response also lists this under `alternatives`.
+
+1. POST {base}/agents with {{"name": "<your name>"}}. The response has your API key, shown once.
+2. POST {base}/agents/me/topups with {{"amount_usd": "10"}} and Authorization: Bearer <key>. A human opens checkout_url and pays by card.
+3. GET {base}/articles/<id> with Authorization: Bearer <key>. The response is 200 with the article body and a signed receipt, and the price is debited from your credit.
+
+Send X-Max-Price-Usd to refuse any price above your limit (409). A 402 here means your credit is too low. GET {base}/agents/me shows your balance.
+Each read is charged, so keep your copy. Writers accrue the same amount and are paid out through Stripe Connect.
+
 ## Licenses
 
 {licenses}
@@ -158,7 +194,7 @@ Each article's license field says which one applies.
 
 ## Receipts
 
-Each purchase returns an Ed25519-signed receipt with the rail, article id, content hash, license, amount and transaction hash.
+Each purchase returns an Ed25519-signed receipt with the rail, article id, content hash, license and amount, plus the transaction hash on XRPL or the credit reference on Stripe.
 Verify it with the public key at {base}/.well-known/tollgate-receipt-key.
 The signature covers the payload as JSON with sorted keys and no whitespace.
 """
@@ -170,6 +206,12 @@ def _default_auth():
     if not (config.SUPABASE_URL and config.SUPABASE_PUBLISHABLE_KEY):
         raise RuntimeError("SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY are required when AUTH_MODE is supabase")
     return SupabaseAuth(config.SUPABASE_URL, config.SUPABASE_PUBLISHABLE_KEY)
+
+
+def _default_stripe() -> StripeGateway | None:
+    if config.STRIPE_SECRET_KEY:
+        return StripeGateway(config.STRIPE_SECRET_KEY, config.STRIPE_WEBHOOK_SECRET)
+    return None
 
 
 def _default_storage() -> SupabaseStorage | None:
@@ -185,6 +227,7 @@ def create_app(
     content_dir: Path | None = None,
     auth=None,
     storage: SupabaseStorage | None = None,
+    stripe_gateway: StripeGateway | None = None,
 ) -> FastAPI:
     auth = auth or _default_auth()
     if isinstance(auth, DemoAuth) and not config.WRITER_ADDRESS:
@@ -192,6 +235,7 @@ def create_app(
 
     db = Database(database or config.database_target())
     storage = storage or _default_storage()
+    gateway = stripe_gateway or _default_stripe()
     seeds = seed_articles(content_dir or config.CONTENT_DIR, DEMO_WRITER_ID, config.XRP_USD_RATE)
     # Demo mode needs its writer to sign in as. Otherwise it only exists to own seeded articles.
     if isinstance(auth, DemoAuth) or seeds:
@@ -211,7 +255,10 @@ def create_app(
     app.state.db, app.state.signer, app.state.auth = db, signer, auth
 
     settlements = Settlements(db, signer)
+    # First match wins, and the XRPL rail takes anything, so it goes last.
     rails = [XrplRail(facilitator, settlements, agent_name)]
+    if gateway:
+        rails.insert(0, StripeCreditRail(db, settlements))
     app.middleware("http")(paywall(db, rails))
 
     app.add_middleware(
@@ -260,10 +307,96 @@ def create_app(
     def llms_txt():
         return _llms_txt()
 
+    # --- agent accounts ---
+    def _require_stripe() -> StripeGateway:
+        if not gateway:
+            raise HTTPException(503, "Stripe is not configured on this server.")
+        return gateway
+
+    def _current_agent(request: Request) -> dict:
+        key = bearer_key(request)
+        agent = db.agent_by_key_hash(hash_key(key)) if key else None
+        if not agent:
+            raise HTTPException(401, "A valid agent key is required.")
+        return agent
+
+    def _apply_checkout(session: dict) -> None:
+        """Credit a paid session, once. The amount comes from Stripe, never from the request."""
+        agent_id = session["metadata"].get("agent_id")
+        if session["livemode"]:
+            log.warning("ignored a live-mode checkout session")
+        elif session["payment_status"] == "paid" and agent_id and db.agent(agent_id):
+            db.add_credit(agent_id, session["amount_total"] * MICROS_PER_CENT, session["id"])
+
+    @app.post("/agents", status_code=201)
+    def create_agent(body: AgentCreate):
+        name = body.name.strip()[:64]
+        if not name:
+            raise HTTPException(422, "A name is required.")
+        key = new_api_key()
+        agent = db.create_agent(name=name, api_key_hash=hash_key(key))
+        return {**agent, "api_key": key, "note": "Shown once. Store it now."}
+
+    @app.get("/agents/me")
+    def get_agent(request: Request):
+        agent = _current_agent(request)
+        return {
+            "name": agent["name"],
+            "credit_usd": format_usd(agent["credit_usd_micros"]),
+            "credit_usd_micros": agent["credit_usd_micros"],
+        }
+
+    @app.post("/agents/me/topups")
+    def create_topup(body: TopUp, request: Request):
+        agent = _current_agent(request)
+        stripe_api = _require_stripe()
+        micros = _usd_field("amount_usd", body.amount_usd)
+        if not MIN_TOPUP_MICROS <= micros <= MAX_TOPUP_MICROS or micros % MICROS_PER_CENT:
+            raise HTTPException(422, "Top up between $1 and $500, in whole cents.")
+        url = stripe_api.create_checkout(
+            agent_id=agent["id"],
+            cents=micros // MICROS_PER_CENT,
+            success_url=f"{config.PUBLIC_URL}/agents/topup/done?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{config.PUBLIC_URL}/agents/topup/cancelled",
+        )
+        return {"checkout_url": url}
+
+    @app.get("/agents/topup/done", response_class=PlainTextResponse)
+    def topup_done(session_id: str):
+        """Also credits, so a top-up still lands if the webhook listener isn't running."""
+        try:
+            _apply_checkout(_require_stripe().retrieve_checkout(session_id))
+        except stripe.StripeError:
+            raise HTTPException(404, "Unknown checkout session.") from None
+        return "Payment received. Credit added. You can close this page."
+
+    @app.get("/agents/topup/cancelled", response_class=PlainTextResponse)
+    def topup_cancelled():
+        return "Top-up cancelled. Nothing was charged."
+
+    @app.post("/webhooks/stripe")
+    async def stripe_webhook(request: Request):
+        stripe_api = _require_stripe()
+        if not stripe_api.webhook_secret:
+            raise HTTPException(503, "STRIPE_WEBHOOK_SECRET is not set.")
+        payload = await request.body()
+        try:
+            session = await run_in_threadpool(
+                stripe_api.checkout_from_webhook, payload, request.headers.get("Stripe-Signature")
+            )
+        except (stripe.SignatureVerificationError, ValueError):
+            raise HTTPException(400, "Invalid signature.") from None
+        if session:
+            await run_in_threadpool(_apply_checkout, session)
+        return {"received": True}
+
     # --- writer routes ---
     @app.get("/me/payout")
     def get_payout(writer: Writer):
-        return {k: writer[k] for k in ("name", "email", "payout_method", "xrpl_address")}
+        return {
+            **{k: writer[k] for k in ("name", "email", "payout_method", "xrpl_address")},
+            "stripe": _stripe_status(writer, gateway),
+        }
 
     @app.put("/me/profile")
     def put_profile(update: ProfileUpdate, writer: Writer):
@@ -281,11 +414,36 @@ def create_app(
         db.set_payout(writer["id"], payout_method=update.payout_method, xrpl_address=address)
         return {"payout_method": update.payout_method, "xrpl_address": address}
 
+    @app.post("/me/stripe/onboarding")
+    def stripe_onboarding(writer: Writer):
+        stripe_api = _require_stripe()
+        account = writer["stripe_account_id"]
+        if not account:
+            account = stripe_api.create_connected_account(writer["email"])
+            db.set_stripe_account(writer["id"], account)
+        back = f"{config.WEB_URL}/onboarding/payout"
+        url = stripe_api.onboarding_link(account, refresh_url=f"{back}?stripe=refresh", return_url=f"{back}?stripe=return")
+        return {"url": url}
+
+    @app.post("/me/stripe/refresh")
+    def stripe_refresh(writer: Writer):
+        """Called on return from Stripe. Reading it here avoids needing Connect webhooks locally."""
+        stripe_api = _require_stripe()
+        if not writer["stripe_account_id"]:
+            return _stripe_status(writer, gateway)
+        status = stripe_api.account_status(writer["stripe_account_id"])
+        db.set_stripe_status(writer["id"], **status)
+        return _stripe_status(db.writer(writer["id"]), gateway)
+
     @app.get("/me/dashboard")
     def dashboard(writer: Writer):
         return {
             "writer": {"name": writer["name"]},
-            "payout": {"method": writer["payout_method"], "xrpl_address": writer["xrpl_address"]},
+            "payout": {
+                "method": writer["payout_method"],
+                "xrpl_address": writer["xrpl_address"],
+                "stripe": _stripe_status(writer, gateway),
+            },
             "xrp_usd_rate": str(config.XRP_USD_RATE),
             **db.dashboard(writer["id"]),
         }

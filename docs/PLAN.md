@@ -55,7 +55,7 @@ Executes `docs/BRIEF.md`. One branch per milestone. All tests pass before each m
 ## What Guillermo must provide
 Nothing else blocks on him. Mock-tested code merges without these; live checks wait for them.
 - **Supabase**: project URL, publishable key, service role key, session pooler DB URL. Dashboard: `{{ .Token }}` in the Magic Link template, `http://localhost:3000/auth/callback` in redirect URLs.
-- **Stripe**: test secret key, Connect enabled on the account, `stripe login` (the CLI is not installed yet).
+- **Stripe**: test secret key, Connect enabled on the account. `make stripe-listen` uses the key, so `stripe login` isn't needed.
 
 ## Decisions the brief leaves open
 - **Second piece for step 6**: the writer uploads two files. "My Stripe balance accrues" needs the piece to be theirs, and step 3 needs an empty dashboard, so nothing can be pre-seeded.

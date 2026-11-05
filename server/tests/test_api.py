@@ -336,7 +336,7 @@ def test_dashboard_totals_pieces_and_agents(client):
     pay(client, "other", agent="Claude")
     data = client.get("/me/dashboard").json()
     assert data["totals"] == {"reads": 3, "earned_usd_micros": 9_000_000, "month_usd_micros": 9_000_000}
-    assert data["payout"] == {"method": "xrpl", "xrpl_address": WRITER}
+    assert data["payout"]["method"] == "xrpl" and data["payout"]["xrpl_address"] == WRITER
     assert data["latest"]["agent"] == "Claude" and data["latest"]["title"] == "Other"
     pieces = {p["id"]: p for p in data["pieces"]}
     assert pieces["other"]["reads"] == 2 and pieces["other"]["earned_usd_micros"] == 8_000_000

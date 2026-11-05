@@ -33,6 +33,11 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "")
 
 
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+WEB_URL = os.getenv("TOLLGATE_WEB_URL", "http://localhost:3000").rstrip("/")
+
+
 def database_target() -> Path | str:
     """Postgres in Supabase mode, SQLite in demo mode."""
     if AUTH_MODE != "supabase":

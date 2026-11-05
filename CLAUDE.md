@@ -11,7 +11,8 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
   - `storage.py` original files in the private `uploads` bucket
   - `content.py` previews, slugs, USD/drops conversion, and seeding from `content/*.md` (frontmatter: id, title, abstract, price_usd, license, tags or keywords, optional preview_mode, train_price_usd, allowed_agents)
   - `paywall.py` the one middleware, priced from the DB per request; picks a rail
-  - `rails/` `base.py` `PaymentRail` and `Sale`, `xrpl.py` the x402 rail, `settle.py` the shared receipt and record step
+  - `rails/` `base.py` `PaymentRail` and `Sale`, `xrpl.py` the x402 rail, `stripe_credit.py` the prepaid rail, `settle.py` the shared receipt and record step
+  - `stripe_gateway.py` every call to Stripe, faked in tests. `payouts.py` ledger balances to test Transfers
   - `session.py` `current_writer()`: `DemoAuth` or `SupabaseAuth`
   - `receipts.py` Ed25519-signed receipts (pynacl); public key at `/.well-known/tollgate-receipt-key`
 - `buyer-mcp/` MCP server for the buyer agent
@@ -30,12 +31,18 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - `make web` → Next.js on :3000 (backend CORS only allows `http://localhost:3000`)
 - `make buyer-test` → buyer MCP spend-control tests (payment faked, no network)
 - `make supabase-setup` → schema, private bucket, checks the browser key reads nothing. `make migrate-db` copies SQLite rows to Postgres
+- `make agent` buyer's agent account, key to `.env` · `make topup ARGS="--usd 10"` Checkout link · `make stripe-listen` webhook forwarding · `make payout` test Transfers
 - `make demo-otp EMAIL=` → prints a sign-in code without sending an email
 - `make demo-reset` → clear writers, articles, purchases and the buyer spend log. Keeps `.env`. Runbook in `docs/DEMO.md`
 
 ## Decisions (don't undo without asking)
 - XRPL rail: x402 "exact" scheme on XRPL testnet (`xrpl:1`), invoiced in XRP drops, settled by t54 facilitator `https://xrpl-facilitator-testnet.t54.ai`.
 - Prices are USD, stored as integer micro-dollars (`*_usd_micros`), exposed as `price_usd` strings. Floats never touch money, and SQLite has no decimal type. Drops are computed per invoice from `XRP_USD_RATE` (placeholder), rounded up to a whole drop.
+- Stripe rail is custodial and test mode only: live keys are refused at startup. Agents prepay credit through Checkout; a read is one transaction that debits credit (conditional update, so it can't go negative), writes the purchase and accrues to the writer.
+- Webhook and Checkout's success page credit through one idempotent function, so a dead `stripe listen` doesn't lose a top-up.
+- On the Stripe rail, the agent name comes from the authenticated account, not `X-Agent-Name`. `X-Max-Price-Usd` is a hard cap like x402's `max_value`. The server charges every read; the buyer's saved copy is what makes re-buying free.
+- `stripe-credit` is listed under `alternatives` in the 402 body, not in `accepts`, because x402 clients read every `accepts` entry as x402.
+- Connect status is pulled on return from onboarding (`/me/stripe/refresh`), so local dev needs no Connect webhooks. Express accounts are "legacy" for new Stripe platforms; `create_connected_account` is the one place to change that.
 - `purchases.tx_hash` holds the chain hash or the Stripe-credit ref, and `rail` says which. Old rows convert at the rate the UI used (1 XRP = $2).
 - `x402-xrpl==0.3.4` pinned (early-stage SDK). `rails/xrpl.py` builds `RequireX402Options` per request for `require_x402`, with price and `pay_to` from the DB.
 - Invoices are stored per article (`ScopedInvoices`). The SDK checks a payment against its invoice, not the URL, so a shared store would let a cheap article's invoice buy an expensive one. Keep `test_invoice_for_a_cheap_article_cannot_buy_another`.

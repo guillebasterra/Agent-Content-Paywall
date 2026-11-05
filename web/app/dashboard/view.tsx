@@ -127,7 +127,7 @@ export default function DashboardView() {
                 +{usd(data.latest.amount_usd_micros)} from {data.latest.agent} {now ? timeAgo(data.latest.created_at, now) : ""}
               </span>
             )}
-            {data.balance_usd_micros > 0 && <span className="muted small">{usd(data.balance_usd_micros)} waiting to be paid out</span>}
+            {data.balance_usd_micros > 0 && <span className="muted small">{usd(data.balance_usd_micros)} Stripe balance</span>}
           </section>
         </div>
         <UploadDrop />
@@ -201,9 +201,16 @@ export default function DashboardView() {
 
       <p className="dashboard-note muted small">
         <Link href="/onboarding/payout">
-          {data.payout.xrpl_address
-            ? <>Payout: XRPL <span className="mono">{shortAddress(data.payout.xrpl_address)}</span></>
-            : "Add a payout method"}
+          {data.payout.xrpl_address || data.payout.stripe.connected ? (
+            <>
+              Payout:
+              {data.payout.xrpl_address && <> XRPL <span className="mono">{shortAddress(data.payout.xrpl_address)}</span></>}
+              {data.payout.xrpl_address && data.payout.stripe.connected && " ·"}
+              {data.payout.stripe.connected && " Stripe connected"}
+            </>
+          ) : (
+            "Add a payout method"
+          )}
         </Link>
         <span>XRP amounts use a placeholder rate: 1 XRP = ${data.xrp_usd_rate}</span>
       </p>

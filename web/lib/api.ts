@@ -19,8 +19,10 @@ export type Article = {
 
 export type Read = { tx_hash: string; rail: string; amount_usd_micros: number; agent: string; created_at: string; title: string };
 
+export type StripeStatus = { available: boolean; connected: boolean; payouts_enabled: boolean };
+
 export type Dashboard = {
-  payout: { method: string | null; xrpl_address: string | null };
+  payout: { method: string | null; xrpl_address: string | null; stripe: StripeStatus };
   xrp_usd_rate: string;
   balance_usd_micros: number;
   totals: { reads: number; earned_usd_micros: number; month_usd_micros: number };
@@ -30,7 +32,7 @@ export type Dashboard = {
   by_agent: { name: string; reads: number; earned_usd_micros: number }[];
 };
 
-export type Payout = { name: string; email: string | null; payout_method: string | null; xrpl_address: string | null };
+export type Payout = { name: string; email: string | null; payout_method: string | null; xrpl_address: string | null; stripe: StripeStatus };
 
 /** Stands in for the paid text, which never reaches the browser. It is only ever shown blurred. */
 export const BLURRED_FILLER =
