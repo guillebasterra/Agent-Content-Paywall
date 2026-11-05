@@ -1,4 +1,4 @@
-.PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset
+.PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset demo-otp supabase-setup migrate-db
 
 server:
 	cd server && uv run uvicorn app.main:app --reload --port 8000
@@ -23,3 +23,12 @@ buy-test:
 
 demo-reset:
 	cd server && uv run python ../scripts/demo_reset.py
+
+demo-otp:
+	cd server && uv run python ../scripts/demo_otp.py $(EMAIL)
+
+supabase-setup:
+	cd server && uv run python ../scripts/supabase_setup.py
+
+migrate-db:
+	cd server && uv run python ../scripts/migrate_to_postgres.py

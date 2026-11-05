@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import Tile from "@/components/tile";
-import { API_URL, count, errorMessage } from "@/lib/api";
+import { count, errorMessage } from "@/lib/api";
+import { writerFetch } from "@/lib/api-client";
 import { takePendingUpload } from "@/lib/pending-upload";
 
 const PREVIEWS = [
@@ -98,7 +99,7 @@ export default function UploadForm({ author }: { author: string }) {
     if (license === "ai-train") form.set("train_price_xrp", TRAINING_PRICE_XRP);
     form.set("allowed_agents", allAgents ? "*" : agents.join(","));
     try {
-      const response = await fetch(`${API_URL}/articles`, { method: "POST", body: form });
+      const response = await writerFetch("/articles", { method: "POST", body: form });
       if (response.ok) {
         router.push("/dashboard");
         return;

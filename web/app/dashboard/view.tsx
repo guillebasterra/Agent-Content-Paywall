@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { API_URL, type Dashboard, USD_PER_XRP, count, reads, shortAddress, timeAgo, txUrl, usd } from "@/lib/api";
+import { type Dashboard, USD_PER_XRP, count, reads, shortAddress, timeAgo, txUrl, usd } from "@/lib/api";
+import { writerFetch } from "@/lib/api-client";
 import { setPendingUpload } from "@/lib/pending-upload";
 
 const POLL_MS = 3000;
@@ -51,6 +52,7 @@ function UploadDrop() {
 }
 
 export default function DashboardView() {
+  const router = useRouter();
   const [data, setData] = useState<Dashboard | null>(null);
   const [failed, setFailed] = useState(false);
   const [now, setNow] = useState(0);
@@ -63,7 +65,11 @@ export default function DashboardView() {
     // Each poll schedules the next, so a slow backend can never stack up requests.
     async function poll() {
       try {
-        const response = await fetch(`${API_URL}/me/dashboard`, { cache: "no-store", signal: controller.signal });
+        const response = await writerFetch("/me/dashboard", { cache: "no-store", signal: controller.signal });
+        if (response.status === 401) {
+          router.replace("/signin");
+          return;
+        }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const next: Dashboard = await response.json();
         if (stopped) return;
@@ -84,7 +90,7 @@ export default function DashboardView() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, []);
+  }, [router]);
 
   if (!data) {
     return (

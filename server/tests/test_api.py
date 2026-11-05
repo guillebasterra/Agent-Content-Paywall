@@ -60,9 +60,10 @@ def content(tmp_path):
 
 
 @pytest.fixture
-def client(facilitator, content, tmp_path):
-    app = create_app(facilitator.client, db_path=tmp_path / "test.db", content_dir=content)
-    return TestClient(app)
+def client(facilitator, content, database):
+    app = create_app(facilitator.client, database=database, content_dir=content)
+    yield TestClient(app)
+    app.state.db.close()
 
 
 def pay(client, article_id, *, challenge=None, agent=None):
@@ -91,14 +92,15 @@ def test_seeds_from_content_and_assigns_demo_writer(client):
     assert items[0]["keywords"] == ["xrpl", "reserves"]
 
 
-def test_restart_keeps_data_and_does_not_reseed_over_it(facilitator, content, tmp_path):
-    path = tmp_path / "test.db"
-    first = TestClient(create_app(facilitator.client, db_path=path, content_dir=content))
+def test_restart_keeps_data_and_does_not_reseed_over_it(facilitator, content, database):
+    first = TestClient(create_app(facilitator.client, database=database, content_dir=content))
     first.put("/me/payout", json={"payout_method": "xrpl", "xrpl_address": OTHER_ADDRESS})
     upload(first)
-    second = TestClient(create_app(facilitator.client, db_path=path, content_dir=content))
+    first.app.state.db.close()
+    second = TestClient(create_app(facilitator.client, database=database, content_dir=content))
     assert second.get("/me/payout").json()["xrpl_address"] == OTHER_ADDRESS
     assert len(second.get("/catalog").json()["articles"]) == 2
+    second.app.state.db.close()
 
 
 def test_catalog_never_exposes_the_body(client):
@@ -209,7 +211,7 @@ def test_old_database_gains_agent_column_and_keeps_purchases(facilitator, conten
                 "VALUES ('T', 'seeded', ?, 500000, 'xrpl:1', '{}')", (WRITER,))
     old.commit()
     old.close()
-    app = TestClient(create_app(facilitator.client, db_path=path, content_dir=content))
+    app = TestClient(create_app(facilitator.client, database=path, content_dir=content))
     assert app.get("/ledger").json()["purchases"][0]["agent"] == "unknown"
     assert app.get("/catalog").json()["articles"][0]["reads"] == 1
 
@@ -268,11 +270,13 @@ def test_dashboard_totals_pieces_and_agents(client):
     assert data["by_agent"][0] == {"name": "Claude", "reads": 2, "earned_drops": 2_500_000}
 
 
-def test_empty_dashboard(tmp_path, facilitator):
+def test_empty_dashboard(tmp_path, facilitator, database):
     empty = tmp_path / "empty"
     empty.mkdir()
-    data = TestClient(create_app(facilitator.client, db_path=tmp_path / "e.db", content_dir=empty)).get("/me/dashboard").json()
+    app = create_app(facilitator.client, database=database, content_dir=empty)
+    data = TestClient(app).get("/me/dashboard").json()
     assert data["totals"]["reads"] == 0 and data["latest"] is None and data["pieces"] == []
+    app.state.db.close()
 
 
 def test_payout_validates_address_and_rejects_stripe(client):

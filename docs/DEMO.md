@@ -10,6 +10,13 @@ make server     # :8000
 make web        # :3000
 ```
 
+For the real demo, set `AUTH_MODE=supabase` in `.env` and run `make supabase-setup` once. `AUTH_MODE=demo` is the fallback: one placeholder writer, no sign-in, SQLite.
+
+## Sign-in codes
+Supabase's built-in email allows only a few sends per hour, so a rehearsal can use up the demo's send. Rehearse with `make demo-otp EMAIL=you@example.com`, which prints a code and sends nothing. If the live email is rate limited, the same command rescues the demo.
+
+The Magic Link email template must contain `{{ .Token }}`, or no code arrives.
+
 ## Claude Desktop
 `~/Library/Application Support/Claude/claude_desktop_config.json`, then restart Desktop:
 ```json

@@ -2,7 +2,7 @@
 
 Free:   GET /catalog, GET /ledger, GET /llms.txt, GET /.well-known/tollgate-receipt-key
 Paid:   GET /articles/{id}  (x402 over XRPL; payment goes straight to the writer)
-Writer: GET/PUT /me/payout, GET /me/dashboard, POST /articles
+Writer: GET/PUT /me/payout, PUT /me/profile, GET /me/dashboard, POST /articles
 """
 
 import base64
@@ -27,7 +27,8 @@ from .content import content_hash, preview_text, seed_articles, slugify, to_drop
 from .db import Database
 from .paywall import agent_name, article_id_from, paywall
 from .receipts import ReceiptSigner
-from .session import DEMO_WRITER_EMAIL, DEMO_WRITER_ID, DEMO_WRITER_NAME, current_writer
+from .session import DEMO_WRITER_EMAIL, DEMO_WRITER_ID, DEMO_WRITER_NAME, DemoAuth, SupabaseAuth, current_writer
+from .storage import SupabaseStorage
 
 log = logging.getLogger("tollgate")
 
@@ -42,6 +43,10 @@ LICENSES = {
 PreviewMode = Literal["none", "w50", "w100", "p10"]
 License = Literal["ai-input", "ai-train"]
 Writer = Annotated[dict, Depends(current_writer)]
+
+
+class ProfileUpdate(BaseModel):
+    name: str
 
 
 class PayoutUpdate(BaseModel):
@@ -158,20 +163,41 @@ The signature covers the payload as JSON with sorted keys and no whitespace.
 """
 
 
+def _default_auth():
+    if config.AUTH_MODE == "demo":
+        return DemoAuth()
+    if not (config.SUPABASE_URL and config.SUPABASE_PUBLISHABLE_KEY):
+        raise RuntimeError("SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY are required when AUTH_MODE is supabase")
+    return SupabaseAuth(config.SUPABASE_URL, config.SUPABASE_PUBLISHABLE_KEY)
+
+
+def _default_storage() -> SupabaseStorage | None:
+    if config.AUTH_MODE == "supabase" and config.SUPABASE_SERVICE_ROLE_KEY:
+        return SupabaseStorage(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY)
+    return None
+
+
 def create_app(
     facilitator: AsyncFacilitatorClient | None = None,
     *,
-    db_path: Path | None = None,
+    database: Path | str | None = None,
     content_dir: Path | None = None,
+    auth=None,
+    storage: SupabaseStorage | None = None,
 ) -> FastAPI:
     if not config.WRITER_ADDRESS:
         raise RuntimeError("WRITER_ADDRESS missing — run `make wallets` first")
 
-    db = Database(db_path or config.DB_PATH)
-    db.ensure_writer(
-        id=DEMO_WRITER_ID, name=DEMO_WRITER_NAME, email=DEMO_WRITER_EMAIL, xrpl_address=config.WRITER_ADDRESS
-    )
-    for row in seed_articles(content_dir or config.CONTENT_DIR, DEMO_WRITER_ID):
+    db = Database(database or config.database_target())
+    auth = auth or _default_auth()
+    storage = storage or _default_storage()
+    seeds = seed_articles(content_dir or config.CONTENT_DIR, DEMO_WRITER_ID)
+    # Demo mode needs its writer to sign in as. Otherwise it only exists to own seeded articles.
+    if isinstance(auth, DemoAuth) or seeds:
+        db.ensure_writer(
+            id=DEMO_WRITER_ID, name=DEMO_WRITER_NAME, email=DEMO_WRITER_EMAIL, xrpl_address=config.WRITER_ADDRESS
+        )
+    for row in seeds:
         if not db.article_exists(row["id"]):
             db.add_article(row)
 
@@ -181,7 +207,7 @@ def create_app(
     )
 
     app = FastAPI(title="Toll Gate")
-    app.state.db, app.state.signer = db, signer
+    app.state.db, app.state.signer, app.state.auth = db, signer, auth
 
     app.middleware("http")(paywall(db, facilitator))
 
@@ -281,6 +307,14 @@ def create_app(
     def get_payout(writer: Writer):
         return {k: writer[k] for k in ("name", "email", "payout_method", "xrpl_address")}
 
+    @app.put("/me/profile")
+    def put_profile(update: ProfileUpdate, writer: Writer):
+        name = update.name.strip()
+        if not name or len(name) > 100:
+            raise HTTPException(422, "Enter a name of up to 100 characters.")
+        db.set_name(writer["id"], name)
+        return {"name": name}
+
     @app.put("/me/payout")
     def put_payout(update: PayoutUpdate, writer: Writer):
         address = update.xrpl_address.strip()
@@ -357,6 +391,10 @@ def create_app(
             "train_price_drops": train_drops,
             "allowed_agents": ["*"] if "*" in agents else agents,
         })
+        if storage:
+            path = f"{writer['id']}/{article_id}/original{suffix}"
+            if await storage.save(path, raw, file.content_type or "text/plain"):
+                db.set_storage_path(article_id, path)
         return listing(db.article(article_id))
 
     return app

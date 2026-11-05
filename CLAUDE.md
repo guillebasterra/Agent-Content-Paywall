@@ -6,16 +6,17 @@ Demo goal: give an agent a budget → it browses `/catalog` → pays for an arti
 Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanations brief, bullets over prose.
 
 ## Layout
-- `server/` FastAPI backend (`app/main.py` builds the app via `create_app(facilitator=None, db_path=, content_dir=)`)
-  - `db.py` SQLite store: `writers`, `articles`, `purchases` (`server/tollgate.db`, gitignored)
+- `server/` FastAPI backend (`app/main.py` builds the app via `create_app(facilitator=None, database=, content_dir=, auth=, storage=)`)
+  - `db.py` one store on SQLite (demo, `server/tollgate.db`, gitignored) or Postgres (Supabase): `writers`, `articles`, `purchases`
+  - `storage.py` original files in the private `uploads` bucket
   - `content.py` previews, slugs, XRP/drops conversion, and seeding from `content/*.md` (frontmatter: id, title, abstract, price_xrp, license, tags or keywords, optional preview_mode, train_price_xrp, allowed_agents)
   - `paywall.py` the one x402 middleware, priced from the DB per request
-  - `session.py` `current_writer()`, the auth placeholder
+  - `session.py` `current_writer()`: `DemoAuth` or `SupabaseAuth`
   - `receipts.py` Ed25519-signed receipts (pynacl); public key at `/.well-known/tollgate-receipt-key`
 - `buyer-mcp/` MCP server for the buyer agent
   - `buyer_mcp/server.py` tools: `get_budget`, `browse_catalog(query)`, `buy_article(id, max_price_xrp)`, `get_receipts`
   - `buyer_mcp/budget.py` spend log (`buyer-mcp/budget.json`, gitignored; delete it to reset the demo budget)
-- `web/` Next.js App Router: `/signin`, `/onboarding/payout`, `/dashboard` (polls every 3s), `/upload`, `/catalog`, `/articles/[id]`. Built from the "Toll Gate site mockup" artifact, with amounts in XRP. `lib/session.ts` holds `getSession()`, the auth placeholder
+- `web/` Next.js App Router: `/signin`, `/onboarding/payout`, `/dashboard` (polls every 3s), `/upload`, `/catalog`, `/articles/[id]`. Built from the "Toll Gate site mockup" artifact, with amounts in XRP. `lib/session.ts` holds `getSession()`; `proxy.ts` refreshes Supabase sessions and guards writer pages; `lib/api-client.ts` `writerFetch` adds the bearer token. Public Supabase values come from the root `.env` through `next.config.ts`
 - `scripts/create_wallets.py` faucet-funded testnet wallets → `.env`
 - `scripts/buy_test.py` live end-to-end purchase with the buyer wallet
 
@@ -27,6 +28,8 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - `make buyer` → run buyer MCP over stdio
 - `make web` → Next.js on :3000 (backend CORS only allows `http://localhost:3000`)
 - `make buyer-test` → buyer MCP spend-control tests (payment faked, no network)
+- `make supabase-setup` → schema, private bucket, checks the browser key reads nothing. `make migrate-db` copies SQLite rows to Postgres
+- `make demo-otp EMAIL=` → prints a sign-in code without sending an email
 - `make demo-reset` → clear writers, articles, purchases and the buyer spend log. Keeps `.env`. Runbook in `docs/DEMO.md`
 
 ## Decisions (don't undo without asking)
@@ -39,8 +42,12 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - `buyer-mcp` uses `mcp>=2` (class is `MCPServer` from `mcp.server.mcpserver`, not FastMCP) plus `x402-xrpl`, with `override-dependencies = ["uvicorn>=0.31.1"]` because x402-xrpl pins uvicorn<0.31.
 - Buyer purchases go through `x402_xrpl.clients.x402_purchase(..., max_value=<drops>)` — hard price cap.
 - Python 3.12, uv-managed per subproject.
-- Auth is a placeholder: sign-in screens are UI only and every action runs as one demo writer. Supabase Auth replaces both seams later: backend `current_writer()` and frontend `getSession()`. Until then, writer endpoints are unauthenticated, so don't expose the backend publicly.
-- Content lives in SQLite. On startup, `content/*.md` files with a new id are imported to the demo writer. Editing an imported file changes nothing, and frontmatter `author` and `pay_to` are ignored. `content/demo/` is not imported: those are files to upload by hand, so the demo starts empty.
+- `AUTH_MODE=demo|supabase`. Demo keeps one placeholder writer on SQLite with unauthenticated writer routes, so don't expose it publicly. Supabase uses email codes and Postgres.
+- ES256/RS256 tokens are verified locally against JWKS. HS256 tokens go to `/auth/v1/user`, as Supabase recommends. No JWT secret is stored, so a token can't pick a weaker check.
+- Every Postgres table has RLS on and no policies, because Supabase serves `public` to the browser key. Any new table must join `TABLES` in `db.py`. `make supabase-setup` checks this live.
+- Original-file storage is best effort: the text is in the database, so a Storage outage must not stop publishing.
+- Writers set their byline on onboarding. A new writer's name starts as the email's local part.
+- Content lives in the database. On startup, `content/*.md` files with a new id are imported to the demo writer (in Supabase mode, a house account nobody signs in as). Editing an imported file changes nothing, and frontmatter `author` and `pay_to` are ignored. `content/demo/` is not imported: those are files to upload by hand, so the demo starts empty.
 - The demo writer's address comes from `WRITER_ADDRESS` once. After `make wallets ARGS=--force`, update it on `/onboarding/payout`.
 - `X-Agent-Name` is self-reported. It's recorded per purchase, and `allowed_agents` is checked against it (403 before any payment), so this is an honor system, not access control. Buyer MCP sends `BUYER_AGENT_NAME` (default `Claude`).
 - Free previews are capped at half the article, so "first 100 words" can't give away a short piece. The rule is in `preview_text` and mirrored in `web/app/upload/form.tsx`.

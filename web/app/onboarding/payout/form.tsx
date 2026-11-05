@@ -3,22 +3,25 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { API_URL, errorMessage } from "@/lib/api";
+import { errorMessage } from "@/lib/api";
+import { writerFetch } from "@/lib/api-client";
 
 export default function PayoutForm() {
   const router = useRouter();
   const [method, setMethod] = useState<"stripe" | "xrpl">("xrpl");
+  const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${API_URL}/me/payout`, { signal: controller.signal })
+    writerFetch("/me/payout", { signal: controller.signal })
       .then((response) => (response.ok ? response.json() : null))
       .then((payout) => {
         // Keep anything typed while this was loading.
         if (payout?.xrpl_address) setAddress((typed) => typed || payout.xrpl_address);
+        if (payout?.name) setName((typed) => typed || payout.name);
       })
       .catch(() => {});
     return () => controller.abort();
@@ -30,9 +33,16 @@ export default function PayoutForm() {
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(`${API_URL}/me/payout`, {
+      const json = { "Content-Type": "application/json" };
+      const profile = await writerFetch("/me/profile", { method: "PUT", headers: json, body: JSON.stringify({ name }) });
+      if (!profile.ok) {
+        setError(await errorMessage(profile));
+        setSaving(false);
+        return;
+      }
+      const response = await writerFetch("/me/payout", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: json,
         body: JSON.stringify({ payout_method: "xrpl", xrpl_address: address }),
       });
       if (response.ok) {
@@ -48,6 +58,18 @@ export default function PayoutForm() {
 
   return (
     <form className="stack" onSubmit={save}>
+      <div className="field-group">
+        <label htmlFor="name" className="label-muted">Your name, as agents will cite it</label>
+        <input
+          id="name"
+          className="input input-large"
+          type="text"
+          maxLength={100}
+          autoComplete="name"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </div>
       <fieldset className="field-group">
         <legend className="visually-hidden">Payout method</legend>
 

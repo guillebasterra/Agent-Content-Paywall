@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { getSession } from "@/lib/session";
+import { AUTH_MODE } from "@/lib/supabase-config";
 import Logo from "./logo";
+import SignOut from "./sign-out";
 
 export default async function AppHeader({ current }: { current: "dashboard" | "catalog" }) {
   const session = await getSession();
@@ -13,6 +15,7 @@ export default async function AppHeader({ current }: { current: "dashboard" | "c
         <Link href="/catalog" aria-current={current === "catalog" ? "page" : undefined}>Catalog</Link>
         {current !== "dashboard" && <Link href="/upload" className="button button-small">Upload</Link>}
         {name && <span className="avatar" role="img" aria-label={`Signed in as ${name}`}>{name[0]}</span>}
+        {AUTH_MODE === "supabase" && name && <SignOut />}
       </nav>
     </header>
   );
