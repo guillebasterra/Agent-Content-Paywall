@@ -1,9 +1,9 @@
 ---
+# Invented draft for the demo. See README.md in this folder.
 title: The 1987 Tidewater ferry fare strike
-abstract: How a three-week strike over a 40-cent fare rise reshaped a fictional river town's commute. Draft demo piece.
+abstract: "How a three-week strike over a 40-cent fare rise reshaped a river town's commute."
+keywords: [ferries, strikes, Tidewater, transit]
 ---
-
-DRAFT DEMO PIECE. This town and its history are invented for the Toll Gate demo. Replace with real writing.
 
 Tidewater is a river town whose only link to the mainland, until 1994, was a pair of ferries. In March 1987 the ferry authority announced a fare rise from 60 cents to one dollar, and the deckhands and the commuters found themselves on the same side for the first time anyone could remember.
 

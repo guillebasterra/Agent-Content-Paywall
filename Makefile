@@ -1,4 +1,4 @@
-.PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset demo-otp supabase-setup migrate-db agent topup payout stripe-listen rail
+.PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset demo-otp supabase-setup migrate-db agent topup payout stripe-listen rail web-demo
 
 server:
 	cd server && uv run uvicorn app.main:app --reload --port 8000
@@ -14,6 +14,10 @@ buyer-test:
 
 web:
 	cd web && npm run dev
+
+# For the live demo: a production build has no dev overlay and no compile pauses between pages.
+web-demo:
+	cd web && npm run build && npm run start
 
 wallets:
 	cd server && uv run python ../scripts/create_wallets.py $(ARGS)

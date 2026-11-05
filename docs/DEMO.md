@@ -7,7 +7,7 @@ Three terminals from the repo root, in this order:
 ```bash
 make demo-reset
 make server     # :8000
-make web        # :3000
+make web-demo   # :3000, production build. Rebuild after changing .env
 ```
 
 For the real demo, set `AUTH_MODE=supabase` in `.env` and run `make supabase-setup` once. `AUTH_MODE=demo` is the fallback: one placeholder writer, no sign-in, SQLite.
@@ -35,7 +35,7 @@ Top up before step 6: `make topup ARGS="--usd 10"`. Pay with **4000 0000 0000 00
 After step 6, `make payout` sends the accrued balance to the writer's connected account as a test Transfer.
 
 ## Files to upload
-`content/demo/` has two invented draft pieces, one per rail. Replace them with real writing.
+`content/demo/` has two invented draft pieces, one per rail. The form prefills from their frontmatter. Replace them with real writing.
 - `orchard-frost-fans.md`. Ask: "Why do Halden Valley orchards start frost fans at 2.4 degrees?"
 - `tidewater-ferry-fares.md`. Ask: "How did the 1987 Tidewater ferry strike end?"
 
