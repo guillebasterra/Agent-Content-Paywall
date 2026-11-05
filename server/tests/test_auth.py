@@ -13,7 +13,7 @@ from test_api import BODY, MockFacilitator, upload
 from app.db import Database
 from app.main import create_app
 from app.session import SupabaseAuth
-from app.storage import SupabaseStorage
+from app.storage import SupabaseStorage, service_headers
 
 URL = "https://project.supabase.co"
 ISSUER = f"{URL}/auth/v1"
@@ -251,3 +251,8 @@ def test_migration_keeps_rows_and_order(tmp_path, empty_content, postgres_url):
     assert target.article("a-new-piece")["reads"] == 2
     app.state.db.close()
     target.close()
+
+
+def test_secret_keys_are_never_sent_as_bearer_tokens():
+    assert service_headers("sb_secret_abc") == {"apikey": "sb_secret_abc"}
+    assert service_headers("eyJlegacy") == {"apikey": "eyJlegacy", "Authorization": "Bearer eyJlegacy"}

@@ -1,6 +1,7 @@
-"""Print a sign-in code without sending an email, for when Supabase's email limit is hit.
+"""Print a sign-in code without sending an email.
 
-Enter the code on /signin after requesting one, or skip the request if email is rate limited.
+The default Supabase email holds only a link, and changing its template needs custom SMTP, so
+this is the way to get a code. On /signin, enter your email, choose "I have a code", enter it.
 
     make demo-otp EMAIL=you@example.com
 """
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "server"))
 
 from app import config  # noqa: E402
+from app.storage import service_headers  # noqa: E402
 
 
 def main() -> None:
@@ -24,10 +26,9 @@ def main() -> None:
     if not (config.SUPABASE_URL and config.SUPABASE_SERVICE_ROLE_KEY):
         sys.exit("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in .env")
 
-    key = config.SUPABASE_SERVICE_ROLE_KEY
     response = httpx.post(
         f"{config.SUPABASE_URL.rstrip('/')}/auth/v1/admin/generate_link",
-        headers={"apikey": key, "Authorization": f"Bearer {key}"},
+        headers=service_headers(config.SUPABASE_SERVICE_ROLE_KEY),
         json={"type": "magiclink", "email": args.email},
         timeout=20,
     )

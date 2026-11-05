@@ -327,6 +327,23 @@ def test_gateway_verifies_real_signatures():
     assert gateway.checkout_from_webhook(*(lambda b: (b, signed(b)))(webhook_body("cs", type="other"))) is None
 
 
+def test_gateway_reads_real_stripe_objects():
+    """The fake gateway above returns plain dicts, so this is what covers the SDK's own types."""
+    from types import SimpleNamespace
+
+    session = stripe.checkout.Session.construct_from(
+        {"id": "cs_1", "payment_status": "paid", "amount_total": 1000, "metadata": {"agent_id": "a"}, "livemode": False}, "k"
+    )
+    bare = stripe.checkout.Session.construct_from(
+        {"id": "cs_2", "payment_status": "unpaid", "amount_total": 1, "metadata": None, "livemode": False}, "k"
+    )
+    gateway = StripeGateway("sk_test_x")
+    sessions = {"cs_1": session, "cs_2": bare}
+    gateway.client = SimpleNamespace(v1=SimpleNamespace(checkout=SimpleNamespace(sessions=SimpleNamespace(retrieve=sessions.get))))
+    assert gateway.retrieve_checkout("cs_1")["metadata"] == {"agent_id": "a"}
+    assert gateway.retrieve_checkout("cs_2")["metadata"] == {}
+
+
 def test_connect_onboarding_reuses_one_account_and_reports_status(client, gateway):
     assert client.get("/me/payout").json()["stripe"] == {"available": True, "connected": False, "payouts_enabled": False}
     first = client.post("/me/stripe/onboarding").json()["url"]

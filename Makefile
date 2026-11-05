@@ -46,12 +46,8 @@ topup:
 payout:
 	cd server && uv run python ../scripts/payout.py
 
-# Writes the webhook secret to .env, then forwards events. Restart `make server` if the secret was new.
 stripe-listen:
-	@set -a; . ./.env; set +a; \
-	secret=$$(stripe listen --api-key "$$STRIPE_SECRET_KEY" --print-secret); \
-	cd server && uv run python -c "import sys; sys.path.insert(0, '../scripts'); from pathlib import Path; from create_wallets import write_env; write_env(Path('../.env'), {'STRIPE_WEBHOOK_SECRET': '$$secret'})"; cd ..; \
-	stripe listen --api-key "$$STRIPE_SECRET_KEY" --forward-to localhost:8000/webhooks/stripe
+	cd server && uv run python ../scripts/stripe_listen.py
 
 # make rail RAIL=stripe  (or xrpl). The buyer MCP picks it up on its next call, no restart needed.
 rail:

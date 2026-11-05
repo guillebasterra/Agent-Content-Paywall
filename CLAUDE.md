@@ -33,7 +33,7 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - `make supabase-setup` → schema, private bucket, checks the browser key reads nothing. `make migrate-db` copies SQLite rows to Postgres
 - `make agent` buyer's agent account, key to `.env` · `make topup ARGS="--usd 10"` Checkout link · `make stripe-listen` webhook forwarding · `make payout` test Transfers
 - `make rail RAIL=stripe|xrpl` → switches the buyer MCP live
-- `make demo-otp EMAIL=` → prints a sign-in code without sending an email
+- `make demo-otp EMAIL=` → prints a sign-in code without sending an email. On `/signin`: email, then "I have a code"
 - `make demo-reset` → clear writers, articles, purchases and the buyer spend log. Keeps `.env`. Runbook in `docs/DEMO.md`
 
 ## Decisions (don't undo without asking)
@@ -43,7 +43,7 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - Webhook and Checkout's success page credit through one idempotent function, so a dead `stripe listen` doesn't lose a top-up.
 - On the Stripe rail, the agent name comes from the authenticated account, not `X-Agent-Name`. `X-Max-Price-Usd` is a hard cap like x402's `max_value`. The server charges every read; the buyer's saved copy is what makes re-buying free.
 - `stripe-credit` is listed under `alternatives` in the 402 body, not in `accepts`, because x402 clients read every `accepts` entry as x402.
-- Connect status is pulled on return from onboarding (`/me/stripe/refresh`), so local dev needs no Connect webhooks. Express accounts are "legacy" for new Stripe platforms; `create_connected_account` is the one place to change that.
+- Connect status is pulled on return from onboarding (`/me/stripe/refresh`), so local dev needs no Connect webhooks. Stripe refuses v1 `type=express` for this sandbox, so `create_connected_account` uses Accounts v2: Express dashboard (preview version), merchant + recipient, Stripe collecting fees and losses.
 - `purchases.tx_hash` holds the chain hash or the Stripe-credit ref, and `rail` says which. Old rows convert at the rate the UI used (1 XRP = $2).
 - `x402-xrpl==0.3.4` pinned (early-stage SDK). `rails/xrpl.py` builds `RequireX402Options` per request for `require_x402`, with price and `pay_to` from the DB.
 - Invoices are stored per article (`ScopedInvoices`). The SDK checks a payment against its invoice, not the URL, so a shared store would let a cheap article's invoice buy an expensive one. Keep `test_invoice_for_a_cheap_article_cannot_buy_another`.
@@ -57,6 +57,7 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - ES256/RS256 tokens are verified locally against JWKS. HS256 tokens go to `/auth/v1/user`, as Supabase recommends. No JWT secret is stored, so a token can't pick a weaker check.
 - Every Postgres table has RLS on and no policies, because Supabase serves `public` to the browser key. Any new table must join `TABLES` in `db.py`. `make supabase-setup` checks this live.
 - Original-file storage is best effort: the text is in the database, so a Storage outage must not stop publishing.
+- Sign-in works by magic link (`/auth/callback`) or code. The default Supabase email holds only a link and its template can't change without custom SMTP, so codes come from `make demo-otp`. `SUPABASE_SERVICE_ROLE_KEY` is an `sb_secret_` key, sent in `apikey` only (`service_headers`), never as a bearer.
 - Writers set their byline on onboarding. A new writer's name starts as the email's local part.
 - Content lives in the database. On startup, `content/*.md` files with a new id are imported to the demo writer (in Supabase mode, a house account nobody signs in as). Editing an imported file changes nothing, and frontmatter `author` and `pay_to` are ignored. `content/demo/` is not imported: those are files to upload by hand, so the demo starts empty.
 - The demo writer's address comes from `WRITER_ADDRESS` once. After `make wallets ARGS=--force`, update it on `/onboarding/payout`.
@@ -74,6 +75,7 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 
 ## Rules
 - Never commit `.env` (holds wallet seeds + RECEIPT_SIGNING_KEY). Never print seeds.
+- Never source `.env` in a shell. Lines can have a space after `=`, and the shell then runs the value as a command and prints it. Read it with dotenv.
 - Wallet seeds stay inside the MCP/server process — never put them in the model's context or tool outputs.
 - Commit messages end with the Co-Authored-By / Claude-Session attribution lines the session provides.
 
@@ -84,8 +86,8 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - [x] Phase 5 web: six mockup screens, SQLite content, per-request paywall, uploads, dashboard
 - [x] M1 baseline · [x] M2 Supabase + Postgres · [x] M3 USD + `PaymentRail` · [x] M4 Stripe rail · [x] M5 buyer on Stripe. Plan in `docs/PLAN.md`
 - [x] Live: XRPL purchase through the real MCP over stdio, with browser upload and dashboard tick, in demo mode
-- [ ] **Next:** M6 full run in Supabase mode. Waiting on Supabase and Stripe keys. Until then, auth, Postgres on Supabase, Checkout, Connect and Transfers are tested only with mocks and a local Postgres
-- [ ] One pass in Claude Desktop itself (only stdio has been driven)
+- [x] M6 live in Supabase mode, from `make demo-reset`: code sign-in, magic link (PKCE), upload to Postgres and Storage, XRPL buy, Checkout top-up, webhook, Stripe buy, dashboard, `/llms.txt`. The MCP was driven over stdio
+- [ ] Needs a human: Stripe hosted onboarding (CAPTCHA), so "dashboard shows both", `connected` status and a successful `make payout` are unverified live. One pass in Claude Desktop (add it to `claude_desktop_config.json`, including an above-threshold approval)
 - [ ] `next dev` sometimes shows a "1 Issue" badge, cause not found, nothing in the console. `make web-demo` has no overlay
 - [ ] `.docx` and `.pdf` uploads (415 for now) · Xaman button (disabled, "Coming soon") · Training sales (the license and price are stored, there is no way to buy yet)
 - [ ] Phase 6 real articles (Guillermo writes; `content/demo/` holds invented drafts) · [ ] Phase 7 rehearsal + backup recording

@@ -419,7 +419,7 @@ def create_app(
         stripe_api = _require_stripe()
         account = writer["stripe_account_id"]
         if not account:
-            account = stripe_api.create_connected_account(writer["email"])
+            account = stripe_api.create_connected_account(writer["email"] or f"writer-{writer['id']}@tollgate.local")
             db.set_stripe_account(writer["id"], account)
         back = f"{config.WEB_URL}/onboarding/payout"
         url = stripe_api.onboarding_link(account, refresh_url=f"{back}?stripe=refresh", return_url=f"{back}?stripe=return")

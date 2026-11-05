@@ -54,7 +54,7 @@ Executes `docs/BRIEF.md`. One branch per milestone. All tests pass before each m
 
 ## What Guillermo must provide
 Nothing else blocks on him. Mock-tested code merges without these; live checks wait for them.
-- **Supabase**: project URL, publishable key, service role key, session pooler DB URL. Dashboard: `{{ .Token }}` in the Magic Link template, `http://localhost:3000/auth/callback` in redirect URLs.
+- **Supabase**: project URL, publishable key, service role key, session pooler DB URL. Dashboard: `http://localhost:3000/auth/callback` in redirect URLs. The email template stays default (editing it needs custom SMTP), so `make demo-otp` supplies codes.
 - **Stripe**: test secret key, Connect enabled on the account. `make stripe-listen` uses the key, so `stripe login` isn't needed.
 
 ## Decisions the brief leaves open
@@ -67,9 +67,10 @@ Nothing else blocks on him. Mock-tested code merges without these; live checks w
 ## Risks
 | Risk | Plan |
 |---|---|
-| Supabase built-in email allows only a few sends per hour; a rehearsal can burn the demo's send | Automated runs use `make demo-otp`, which sends nothing. Same command is the live fallback. Custom SMTP stays optional |
+| Supabase built-in email allows only a few sends per hour, and its template can't include a code | Rehearse and demo with `make demo-otp`, which sends nothing. The emailed magic link also works |
 | Stripe balance is pending after a normal test card, so Transfers fail | Top up with `4000 0000 0000 0077` (funds available immediately). In DEMO.md |
-| Stripe marks Express as "legacy" for new platforms | Brief specifies Express and it's test mode. Verify live; if refused, use the equivalent `controller` properties |
+| Stripe refused Express (`type` and `controller`) for this sandbox | Happened. Now Accounts v2 with an Express dashboard, Stripe collecting fees and losses |
+| Stripe onboarding shows a CAPTCHA | Happened. Not automatable, so a human does it |
 | Claude Desktop may not support elicitation | Approval fails closed. $0.40 is under the $1 threshold, so the core flow doesn't need it |
 | Claude Desktop can't be driven from here | Stdio run covers the MCP. Guillermo does one Desktop pass before the demo |
 | t54 facilitator down | Fallback in DEMO.md: Stripe rail, and a backup recording |

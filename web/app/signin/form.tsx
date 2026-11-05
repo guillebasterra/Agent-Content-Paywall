@@ -8,7 +8,7 @@ import { browserSupabase } from "@/lib/supabase-browser";
 import { AUTH_MODE } from "@/lib/supabase-config";
 
 const DEMO_NEXT = "/onboarding/payout";
-const LINK_FAILED = "That sign-in link didn't work. Enter your email to get a new code.";
+const LINK_FAILED = "That sign-in link didn't work. Open it in the browser you requested it from, or ask for a new one.";
 
 function friendly(message: string): string {
   if (/rate limit/i.test(message)) return "Too many emails were sent. Wait a while, or use a code from make demo-otp.";
@@ -37,7 +37,7 @@ export default function SignInForm() {
     if (failure) setError(friendly(failure.message));
     else {
       setSent(true);
-      setNotice(`We sent a code to ${email.trim()}.`);
+      setNotice(`We sent a sign-in link to ${email.trim()}. Open it in this browser, or enter a code below.`);
     }
     setBusy(false);
   }
@@ -56,6 +56,17 @@ export default function SignInForm() {
     const payout = response?.ok ? await response.json() : null;
     router.push(landingPath(payout));
     router.refresh();
+  }
+
+  /** For a code from make demo-otp, which sends no email. */
+  function enterCode() {
+    if (!email.trim()) {
+      setError("Enter your email first.");
+      return;
+    }
+    setError("");
+    setNotice("");
+    setSent(true);
   }
 
   function submit(event: React.FormEvent) {
@@ -94,7 +105,7 @@ export default function SignInForm() {
               required
               autoComplete="one-time-code"
               autoFocus
-              placeholder="123456"
+              placeholder="Code from make demo-otp"
               value={code}
               onChange={(event) => setCode(event.target.value)}
             />
@@ -106,12 +117,17 @@ export default function SignInForm() {
       {error && <p className="error" role="alert">{error}</p>}
       {sent ? (
         <p className="muted small">
-          <button type="button" className="text-button" disabled={busy} onClick={sendCode}>Send a new code</button>
+          <button type="button" className="text-button" disabled={busy} onClick={sendCode}>Email me a link</button>
           {" · "}
           <button type="button" className="text-button" disabled={busy} onClick={() => { setSent(false); setCode(""); setError(""); setNotice(""); }}>Use another email</button>
         </p>
       ) : (
         <>
+          {AUTH_MODE === "supabase" && (
+            <p className="muted small">
+              <button type="button" className="text-button" onClick={enterCode}>I have a code</button>
+            </p>
+          )}
           <div className="divider">or</div>
           <button type="button" className="button button-outline button-large" disabled title="Coming soon">
             Sign in with an XRPL wallet (coming soon)

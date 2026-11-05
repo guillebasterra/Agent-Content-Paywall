@@ -12,10 +12,12 @@ make web-demo   # :3000, production build. Rebuild after changing .env
 
 For the real demo, set `AUTH_MODE=supabase` in `.env` and run `make supabase-setup` once. `AUTH_MODE=demo` is the fallback: one placeholder writer, no sign-in, SQLite.
 
-## Sign-in codes
-Supabase's built-in email allows only a few sends per hour, so a rehearsal can use up the demo's send. Rehearse with `make demo-otp EMAIL=you@example.com`, which prints a code and sends nothing. If the live email is rate limited, the same command rescues the demo.
+## Sign-in
+The default Supabase email holds only a link, and changing its template needs custom SMTP. It also allows only a few sends per hour. So rehearse and demo with a code, which sends nothing:
+1. On `/signin`, enter your email and choose **I have a code**.
+2. Run `make demo-otp EMAIL=you@example.com` and type the code it prints.
 
-The Magic Link email template must contain `{{ .Token }}`, or no code arrives.
+Run it right before step 1. **Continue** still emails a magic link, which works if opened in the same browser that requested it.
 
 ## Claude Desktop
 `~/Library/Application Support/Claude/claude_desktop_config.json`, then restart Desktop:
@@ -23,14 +25,16 @@ The Magic Link email template must contain `{{ .Token }}`, or no code arrives.
 {"mcpServers": {"tollgate-buyer": {"command": "/Users/guillebasterra/.local/bin/uv",
   "args": ["run", "--directory", "/Users/guillebasterra/me/cornell/dev/tollgate/buyer-mcp", "python", "-m", "buyer_mcp.server"]}}}
 ```
-Seeds and limits are read from `.env`. Keep them out of this file.
+Seeds and limits are read from `.env`. Keep them out of this file. Switch rails for step 6 with `make rail RAIL=stripe`; no restart needed.
 
 ## Stripe
+**Step 2 is yours to click.** Stripe's hosted onboarding shows a CAPTCHA, so it can't be automated. Choose **Use test phone number** and the other test shortcuts. Each `make demo-reset` means a new writer, so onboarding happens again. It takes a couple of minutes: consider doing it on camera only in the recording.
+
 One-time: `make agent` creates the buyer's account and saves its key to `.env`.
 
 Each run, in its own terminal: `make stripe-listen`. Restart `make server` the first time, so it reads the webhook secret.
 
-Top up before step 6: `make topup ARGS="--usd 10"`. Pay with **4000 0000 0000 0077**, any future date, any CVC. That card makes funds available at once; a normal test card leaves them pending and `make payout` fails with insufficient funds. If the listener is down, the page Checkout returns to still adds the credit.
+Top up before step 6: `make topup ARGS="--usd 10"`. On the Checkout page choose **Card** (the delayed methods it also lists don't credit at once) and pay with **4000 0000 0000 0077**, any future date, any CVC. Untick "Save my information with Link", or it asks for a phone number. That card makes funds available at once; a normal test card leaves them pending and `make payout` fails with insufficient funds. If the listener is down, the page Checkout returns to still adds the credit.
 
 After step 6, `make payout` sends the accrued balance to the writer's connected account as a test Transfer.
 
@@ -39,12 +43,14 @@ After step 6, `make payout` sends the accrued balance to the writer's connected 
 - `orchard-frost-fans.md`. Ask: "Why do Halden Valley orchards start frost fans at 2.4 degrees?"
 - `tidewater-ferry-fares.md`. Ask: "How did the 1987 Tidewater ferry strike end?"
 
-Upload both: step 6 needs a second piece of yours, or your Stripe balance can't accrue.
+Upload both, one in step 3 and one just before step 6: step 6 needs a second piece of yours, or your Stripe balance can't accrue.
 
 ## Pre-flight
 - [ ] `make server-test` and `make buyer-test` pass
 - [ ] `curl -s https://xrpl-facilitator-testnet.t54.ai/supported` responds
-- [ ] `make demo-reset` run, server restarted
+- [ ] `make demo-reset` run
+- [ ] `make topup` done with the test card (reset zeroes credit), and `make rail RAIL=xrpl`
+- [ ] `make stripe-listen` running
 - [ ] Signed out in the browser
 - [ ] Buyer wallet has testnet XRP (`get_budget` shows the balance). If the testnet was reset: `make wallets ARGS=--force`
 
