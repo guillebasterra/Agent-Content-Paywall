@@ -77,6 +77,23 @@ Nothing else blocks on him. Mock-tested code merges without these; live checks w
 | Sync Postgres calls in async middleware | Fine for one demo user. Noted for production |
 | Pooler connection limits or latency on the 3s dashboard poll | Small pool, prepared statements off |
 
+## Open decision: how to show the agent buying
+Guillermo's call. He doesn't want to force Claude Desktop. Nothing is deployed, and the brief lists production deploy as a non-goal, so don't deploy until he says so.
+
+Reading the site is easy for any agent. Paying is the constraint: a fetch-only chat agent probably can't send an auth header or a signed payment, and the XRPL seed must never reach the model.
+
+- **Option A, no deploy:** Claude Code in a terminal against `localhost`, using the prompts in `DEMO.md` or the instruction below. Works with today's code, but needs a rehearsal with a real model.
+- **Option B, recommended if time allows:** deploy, then tell Claude Code: "Read https://<site>/llms.txt, then find out how the 1987 Tidewater ferry strike ended. Buy what you need and cite it." It pays by Stripe credit with an API key. The XRPL purchase uses the buyer MCP running locally, pointed at the live site. Keep the local setup and a recording as fallbacks.
+
+What Option B needs:
+- Rotated keys first
+- Hosts, for example Vercel for the web app and Render or Fly for the API, run as a single instance because XRPL invoices are held in memory
+- The allowed CORS origin, hardcoded to localhost in `main.py`, made configurable
+- `TOLLGATE_API_URL`, `TOLLGATE_WEB_URL` and `NEXT_PUBLIC_TOLLGATE_API_URL` set to the live URLs
+- The live callback URL in Supabase's redirect list
+- A Stripe webhook endpoint in place of `stripe listen`
+- A decision on public exposure: open agent sign-up, writer uploads and no rate limiting. Take it down or lock it down after the demo
+
 ## Stripe machine payments (checked Nov 4)
 - x402 on Stripe: live acceptance is gated by review. A sandbox path exists using Base Sepolia and the public `x402.org` facilitator.
 - MPP / Shared Payment Tokens: no sign-up form, `link-cli --test`, needs agent OAuth and per-spend approval.

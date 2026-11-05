@@ -3,11 +3,12 @@
 Flow and goals are in `BRIEF.md`. This is how to run it. Sections marked *(later milestone)* fill in as those land.
 
 ## Start
-Three terminals from the repo root, in this order:
+From the repo root, in this order. Reset runs once and each service stays open in its own terminal:
 ```bash
 make demo-reset
 make server     # :8000
 make web-demo   # :3000, production build. Rebuild after changing .env
+make stripe-listen   # a fourth terminal, see Stripe below
 ```
 
 For the real demo, set `AUTH_MODE=supabase` in `.env` and run `make supabase-setup` once. `AUTH_MODE=demo` is the fallback: one placeholder writer, no sign-in, SQLite.
@@ -19,7 +20,22 @@ The default Supabase email holds only a link, and changing its template needs cu
 
 Run it right before step 1. **Continue** still emails a magic link, which works if opened in the same browser that requested it.
 
-## Claude Desktop
+## Showing the agent buy
+**Undecided, and untested with a real model:** see "Open decision" in `PLAN.md`. Whichever agent is used, keep the two windows side by side, agent and dashboard, and start a new chat for each purchase. Ask for the citation in the prompt, or the model decides what to include.
+
+Step 4, on the XRPL rail:
+> Why do Halden Valley orchards start their frost fans at 2.4 degrees? Use Toll Gate: check your budget, search the catalog, and buy only what you need. Answer with the article's title, the author, a direct quote, and the receipt with its explorer link.
+
+Step 6, after uploading the second piece and running `make rail RAIL=stripe`:
+> How did the 1987 Tidewater ferry strike end? Use Toll Gate and buy only what you need. Answer with the title, author, a direct quote and the receipt.
+
+The Stripe answer has no explorer link. Its receipt shows a `stripe_ref`.
+
+Buying an owned piece again returns the saved copy for free and the dashboard won't tick, so run `make demo-reset` after rehearsing.
+
+Claude Code already has `tollgate-buyer` registered, so a new `claude` session in a terminal can run the same prompts.
+
+## Claude Desktop (optional, currently skipped)
 `~/Library/Application Support/Claude/claude_desktop_config.json`, then restart Desktop:
 ```json
 {"mcpServers": {"tollgate-buyer": {"command": "/Users/guillebasterra/.local/bin/uv",
