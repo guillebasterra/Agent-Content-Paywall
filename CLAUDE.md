@@ -1,6 +1,6 @@
 # Toll Gate — project context
 
-Content marketplace where AI agents buy individual articles from writers, per read, over x402 on XRPL.
+Content marketplace where AI agents buy individual articles from writers, per read, over x402 on XRPL or from Stripe-funded credit.
 Demo goal: give an agent a budget → it browses `/catalog` → pays for an article → cites it, with a live dashboard of purchases.
 
 Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanations brief, bullets over prose.
@@ -82,6 +82,11 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - [x] Live `make buy-test` settled on testnet · [x] Phase 4 buyer MCP (registered with `claude mcp add`)
 - [ ] Try one above-threshold purchase in an interactive Claude Code session (approval prompt not yet seen by a human)
 - [x] Phase 5 web: six mockup screens, SQLite content, per-request paywall, uploads, dashboard
-- [ ] `.docx` and `.pdf` uploads (415 for now) · Stripe and Xaman buttons (disabled, "Coming soon") · Training sales (the license and price are stored, there is no way to buy yet)
-- [ ] **Next:** Phase 6 real articles (Guillermo writes) · [ ] Phase 7 rehearsal + backup recording
-- Later: passage-level sales, training-vs-reference licensing (RSL `ai-input`), receipt-as-access-token for re-reads, Stripe rail.
+- [x] M1 baseline · [x] M2 Supabase + Postgres · [x] M3 USD + `PaymentRail` · [x] M4 Stripe rail · [x] M5 buyer on Stripe. Plan in `docs/PLAN.md`
+- [x] Live: XRPL purchase through the real MCP over stdio, with browser upload and dashboard tick, in demo mode
+- [ ] **Next:** M6 full run in Supabase mode. Waiting on Supabase and Stripe keys. Until then, auth, Postgres on Supabase, Checkout, Connect and Transfers are tested only with mocks and a local Postgres
+- [ ] One pass in Claude Desktop itself (only stdio has been driven)
+- [ ] `next dev` sometimes shows a "1 Issue" badge, cause not found, nothing in the console. `make web-demo` has no overlay
+- [ ] `.docx` and `.pdf` uploads (415 for now) · Xaman button (disabled, "Coming soon") · Training sales (the license and price are stored, there is no way to buy yet)
+- [ ] Phase 6 real articles (Guillermo writes; `content/demo/` holds invented drafts) · [ ] Phase 7 rehearsal + backup recording
+- Later list: `docs/BRIEF.md`.
