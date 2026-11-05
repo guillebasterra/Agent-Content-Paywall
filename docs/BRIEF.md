@@ -95,6 +95,7 @@ Keep this list current: add anything deferred while building, and don't build th
 - Stripe Connect in live mode: KYC, payout schedules, tax forms (1099s)
 - Writer wallet options: bring your own, Toll Gate-created wallet, or Stripe only
 - Legal review of custodial balances (money transmission) before handling real funds
+- Review the Stripe integration with Stripe's plugin + MCP (`stripe_implementation_planner`): Express is "legacy" for new platforms, machine payments (x402/MPP) vs prepaid credit, webhook and payout best practices
 
 ### Licensing and access
 - Passage-level sales (sell the relevant chunks instead of the whole piece)

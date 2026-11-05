@@ -3,6 +3,8 @@
 import stripe
 
 TEST_KEY_PREFIXES = ("sk_test_", "rk_test_")
+# Express dashboards with Stripe-managed risk are in public preview on Accounts v2.
+ACCOUNTS_PREVIEW = {"stripe_version": "2026-10-28.preview"}
 
 
 def require_test_key(key: str) -> str:
@@ -39,7 +41,7 @@ class StripeGateway:
             "id": session.id,
             "payment_status": session.payment_status,
             "amount_total": session.amount_total,
-            "metadata": dict(session.metadata or {}),
+            "metadata": session.metadata.to_dict() if session.metadata else {},
             "livemode": session.livemode,
         }
 
@@ -50,15 +52,22 @@ class StripeGateway:
             return None
         return self.retrieve_checkout(event.data.object["id"])
 
-    def create_connected_account(self, email: str | None) -> str:
-        params = {
-            "type": "express",
-            "country": "US",
-            "capabilities": {"card_payments": {"requested": True}, "transfers": {"requested": True}},
-        }
-        if email:
-            params["email"] = email
-        return self.client.v1.accounts.create(params=params).id
+    def create_connected_account(self, email: str) -> str:
+        """Accounts v2. Stripe refuses v1 `type=express` for new platforms, and refuses a recipient-only
+        account unless the platform takes on losses, so this is merchant + recipient with Stripe managing risk."""
+        return self.client.v2.core.accounts.create(
+            params={
+                "contact_email": email,
+                "identity": {"country": "US"},
+                "dashboard": "express",
+                "defaults": {"responsibilities": {"fees_collector": "stripe", "losses_collector": "stripe"}},
+                "configuration": {
+                    "merchant": {"capabilities": {"card_payments": {"requested": True}}},
+                    "recipient": {"capabilities": {"stripe_balance": {"stripe_transfers": {"requested": True}}}},
+                },
+            },
+            options=ACCOUNTS_PREVIEW,
+        ).id
 
     def onboarding_link(self, account_id: str, *, refresh_url: str, return_url: str) -> str:
         return self.client.v1.account_links.create(params={
@@ -69,8 +78,10 @@ class StripeGateway:
         }).url
 
     def account_status(self, account_id: str) -> dict:
-        account = self.client.v1.accounts.retrieve(account_id)
-        return {"details_submitted": bool(account.details_submitted), "payouts_enabled": bool(account.payouts_enabled)}
+        details = self.client.v1.accounts.retrieve(account_id).details_submitted
+        account = self.client.v2.core.accounts.retrieve(account_id, params={"include": ["configuration.recipient"]})
+        transfers = account.configuration.recipient.capabilities.stripe_balance.stripe_transfers.status
+        return {"details_submitted": bool(details), "payouts_enabled": transfers == "active"}
 
     def create_transfer(self, *, cents: int, destination: str, idempotency_key: str) -> str:
         return self.client.v1.transfers.create(

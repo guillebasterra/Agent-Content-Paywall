@@ -3,7 +3,8 @@ import { loadEnvConfig } from "@next/env";
 import type { NextConfig } from "next";
 
 // One .env for the whole repo. Only the values named here reach the browser.
-loadEnvConfig(path.resolve(process.cwd(), ".."));
+// Forced, because Next has already loaded web/ by now and would otherwise return that cached result.
+loadEnvConfig(path.resolve(process.cwd(), ".."), undefined, undefined, true);
 
 const config: NextConfig = {
   devIndicators: false, // The floating badge would cover content on the demo screen.

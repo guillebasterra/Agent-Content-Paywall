@@ -9,10 +9,15 @@ log = logging.getLogger("tollgate")
 BUCKET = "uploads"
 
 
+def service_headers(key: str) -> dict[str, str]:
+    """New sb_secret_ keys aren't JWTs, so they go in apikey only. Legacy service_role keys need both."""
+    return {"apikey": key} if key.startswith("sb_") else {"apikey": key, "Authorization": f"Bearer {key}"}
+
+
 class SupabaseStorage:
     def __init__(self, url: str, service_key: str, *, transport: httpx.AsyncBaseTransport | None = None):
         self.base = f"{url.rstrip('/')}/storage/v1"
-        self.headers = {"apikey": service_key, "Authorization": f"Bearer {service_key}"}
+        self.headers = service_headers(service_key)
         self.transport = transport
 
     async def save(self, path: str, data: bytes, content_type: str) -> bool:

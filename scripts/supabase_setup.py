@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "server"))
 
 from app import config  # noqa: E402
 from app.db import TABLES, Database  # noqa: E402
-from app.storage import BUCKET  # noqa: E402
+from app.storage import BUCKET, service_headers  # noqa: E402
 
 
 def main() -> None:
@@ -36,7 +36,7 @@ def main() -> None:
     Database(config.SUPABASE_DB_URL).close()
     print("schema ready, row level security on")
 
-    service = {"apikey": config.SUPABASE_SERVICE_ROLE_KEY, "Authorization": f"Bearer {config.SUPABASE_SERVICE_ROLE_KEY}"}
+    service = service_headers(config.SUPABASE_SERVICE_ROLE_KEY)
     bucket = httpx.get(f"{base}/storage/v1/bucket/{BUCKET}", headers=service, timeout=20)
     if bucket.status_code == 200:
         if bucket.json().get("public"):
