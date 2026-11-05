@@ -84,9 +84,9 @@ For Claude Desktop, add this to `claude_desktop_config.json`, using absolute pat
 |---|---|
 | `get_budget` | Budget, spent, remaining, wallet balance |
 | `browse_catalog(query)` | Articles and prices, free |
-| `buy_article(id, max_price_xrp)` | Pays, returns the text and a verified receipt. Owned articles are free |
+| `buy_article(id, max_price_usd)` | Pays, returns the text and a verified receipt. Owned articles are free |
 | `get_receipts` | Receipts, explorer links, unresolved payments |
 
-Limits come from `BUYER_BUDGET_XRP` and `BUYER_CONFIRM_ABOVE_XRP`. Spending is logged in `buyer-mcp/budget.json`, and the budget covers article prices, not network fees. Delete that file to reset the budget between demo runs.
+Limits come from `BUYER_BUDGET_USD` and `BUYER_CONFIRM_ABOVE_USD`. Spending is logged in `buyer-mcp/budget.json`, and the budget covers article prices, not network fees. Delete that file to reset the budget between demo runs.
 
 If `buy_article` returns `outcome_unknown`, the budget stays held and retries are blocked. Check the transaction on the explorer. Then set the entry's status to `paid`, or delete the entry if the payment never landed.

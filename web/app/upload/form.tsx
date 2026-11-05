@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import Tile from "@/components/tile";
-import { count, errorMessage } from "@/lib/api";
+import { XRP_USD_RATE, count, errorMessage } from "@/lib/api";
 import { writerFetch } from "@/lib/api-client";
 import { takePendingUpload } from "@/lib/pending-upload";
 
@@ -17,7 +17,7 @@ const PREVIEWS = [
 type PreviewMode = (typeof PREVIEWS)[number]["id"];
 
 const AGENTS = ["ChatGPT", "Claude", "Muse", "Perplexity"];
-const TRAINING_PRICE_XRP = "25";
+const TRAINING_PRICE_USD = "50";
 const READABLE = /\.(md|txt)$/i;
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 
@@ -42,7 +42,7 @@ export default function UploadForm({ author }: { author: string }) {
   const [preview, setPreview] = useState<PreviewMode>("w50");
   const [keywords, setKeywords] = useState<string[]>([]);
   const [keyword, setKeyword] = useState("");
-  const [price, setPrice] = useState("0.5");
+  const [price, setPrice] = useState("0.40");
   const [license, setLicense] = useState<"ai-input" | "ai-train">("ai-input");
   const [allAgents, setAllAgents] = useState(true);
   const [agents, setAgents] = useState<string[]>(AGENTS);
@@ -94,9 +94,9 @@ export default function UploadForm({ author }: { author: string }) {
     form.set("abstract", abstract);
     form.set("preview_mode", preview);
     form.set("keywords", [...keywords, keyword].map((k) => k.trim()).filter(Boolean).join(","));
-    form.set("price_xrp", price);
+    form.set("price_usd", price);
     form.set("license", license);
-    if (license === "ai-train") form.set("train_price_xrp", TRAINING_PRICE_XRP);
+    if (license === "ai-train") form.set("train_price_usd", TRAINING_PRICE_USD);
     form.set("allowed_agents", allAgents ? "*" : agents.join(","));
     try {
       const response = await writerFetch("/articles", { method: "POST", body: form });
@@ -112,6 +112,7 @@ export default function UploadForm({ author }: { author: string }) {
   }
 
   const words = body ? body.split(/\s+/).length : 0;
+  const priceXrp = Number(price) > 0 ? (Number(price) / XRP_USD_RATE).toLocaleString("en-US", { maximumFractionDigits: 6 }) : "";
 
   return (
     <div className="screen">
@@ -226,9 +227,10 @@ export default function UploadForm({ author }: { author: string }) {
             <div className="field">
               <label htmlFor="price" className="label">Price per read</label>
               <div className="input input-affix">
+                <span className="muted">$</span>
                 <input id="price" type="text" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} />
-                <span className="muted">XRP</span>
               </div>
+              {priceXrp && <span className="muted small">≈ {priceXrp} XRP on the XRP Ledger</span>}
             </div>
             <div className="field">
               <label htmlFor="train" className="label">Training license</label>
@@ -239,7 +241,7 @@ export default function UploadForm({ author }: { author: string }) {
                 onChange={(e) => setLicense(e.target.value as "ai-input" | "ai-train")}
               >
                 <option value="ai-input">Not for training</option>
-                <option value="ai-train">Allow training · {TRAINING_PRICE_XRP} XRP flat</option>
+                <option value="ai-train">Allow training · ${TRAINING_PRICE_USD} flat</option>
               </select>
             </div>
           </div>
@@ -274,7 +276,7 @@ export default function UploadForm({ author }: { author: string }) {
             <Tile title={title || "Title"} clear={previewOf(body, preview) || abstract}>
               <span className="tile-row">
                 <span className="strong">{author}</span>
-                <span className="muted">{price} XRP / read</span>
+                <span className="muted">${price} / read</span>
               </span>
             </Tile>
           </div>

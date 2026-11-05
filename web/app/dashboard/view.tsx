@@ -3,11 +3,18 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { type Dashboard, USD_PER_XRP, count, reads, shortAddress, timeAgo, txUrl, usd } from "@/lib/api";
+import { type Dashboard, type Read, count, reads, shortAddress, timeAgo, txUrl, usd } from "@/lib/api";
 import { writerFetch } from "@/lib/api-client";
 import { setPendingUpload } from "@/lib/pending-upload";
 
 const POLL_MS = 3000;
+
+function railLabel(read: Read) {
+  if (read.rail === "xrpl") {
+    return <a href={txUrl(read.tx_hash)} target="_blank" rel="noreferrer">XRPL ↗</a>;
+  }
+  return "Stripe credit";
+}
 
 function UploadDrop() {
   const router = useRouter();
@@ -113,13 +120,14 @@ export default function DashboardView() {
           </section>
           <section aria-label="Earned" className="stat">
             <span className="muted">Earned</span>
-            <span className="stat-value">{usd(data.totals.earned_drops)}</span>
+            <span className="stat-value">{usd(data.totals.earned_usd_micros)}</span>
             {data.latest && (
-              <a key={data.latest.tx_hash} className="latest" href={txUrl(data.latest.tx_hash)} target="_blank" rel="noreferrer">
+              <span key={data.latest.tx_hash} className="latest">
                 <span className="latest-dot" aria-hidden="true" />
-                +{usd(data.latest.price_drops)} {now ? timeAgo(data.latest.created_at, now) : ""}
-              </a>
+                +{usd(data.latest.amount_usd_micros)} from {data.latest.agent} {now ? timeAgo(data.latest.created_at, now) : ""}
+              </span>
             )}
+            {data.balance_usd_micros > 0 && <span className="muted small">{usd(data.balance_usd_micros)} waiting to be paid out</span>}
           </section>
         </div>
         <UploadDrop />
@@ -150,9 +158,9 @@ export default function DashboardView() {
                         {piece.agents.map((agent) => <span key={agent} className="chip">{agent}</span>)}
                       </span>
                     </td>
-                    <td className="number muted">{usd(piece.price_drops)}</td>
+                    <td className="number muted">{usd(piece.price_usd_micros)}</td>
                     <td className="number">{count(piece.reads)}</td>
-                    <td className="number strong">{usd(piece.earned_drops)}</td>
+                    <td className="number strong">{usd(piece.earned_usd_micros)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -161,13 +169,43 @@ export default function DashboardView() {
         )}
       </section>
 
+      {data.recent.length > 0 && (
+        <section aria-labelledby="reads-h" className="pieces">
+          <h2 id="reads-h" className="section-title">Recent reads</h2>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Piece</th>
+                  <th scope="col">Agent</th>
+                  <th scope="col">Paid with</th>
+                  <th scope="col" className="number">Amount</th>
+                  <th scope="col" className="number">When</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.recent.map((read) => (
+                  <tr key={read.tx_hash}>
+                    <td className="piece-title">{read.title}</td>
+                    <td><span className="chip">{read.agent}</span></td>
+                    <td>{railLabel(read)}</td>
+                    <td className="number strong">{usd(read.amount_usd_micros)}</td>
+                    <td className="number muted">{now ? timeAgo(read.created_at, now) : ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       <p className="dashboard-note muted small">
         <Link href="/onboarding/payout">
           {data.payout.xrpl_address
             ? <>Payout: XRPL <span className="mono">{shortAddress(data.payout.xrpl_address)}</span></>
             : "Add a payout method"}
         </Link>
-        <span>Dollar amounts are estimates at 1 XRP = ${USD_PER_XRP}</span>
+        <span>XRP amounts use a placeholder rate: 1 XRP = ${data.xrp_usd_rate}</span>
       </p>
     </main>
   );
