@@ -30,6 +30,28 @@ function previewOf(body: string, mode: PreviewMode): string {
   return words ? body.slice(0, ends[words - 1]) : "";
 }
 
+/** One frontmatter value, without quotes. Lists may be inline ([a, b]) or one "- item" per line. */
+function metaValue(meta: string, key: string): string {
+  return meta.match(new RegExp(`^${key}:[ \\t]*["']?(.*?)["']?[ \\t]*$`, "m"))?.[1] ?? "";
+}
+
+function metaList(meta: string, ...keys: string[]): string[] {
+  for (const key of keys) {
+    const inline = metaValue(meta, key).replace(/^\[|\]$/g, "");
+    if (inline) return inline.split(",").map((k) => k.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+    const block = meta.match(new RegExp(`^${key}:\\s*\\n((?:\\s*-\\s*.+\\n?)+)`, "m"))?.[1];
+    if (block) return [...block.matchAll(/-\s*(.+)/g)].map((m) => m[1].trim());
+  }
+  return [];
+}
+
+/** A starting abstract when the file has none: the opening sentence, without markdown headings. */
+function firstSentence(body: string): string {
+  const text = body.replace(/^#.*$/gm, "").trim().split(/\n\s*\n/)[0] ?? "";
+  const sentence = text.match(/^.+?[.!?](?=\s|$)/s)?.[0] ?? text;
+  return sentence.replace(/\s+/g, " ").slice(0, 240);
+}
+
 const titleFromFilename = (name: string) => name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim();
 
 export default function UploadForm({ author }: { author: string }) {
@@ -58,7 +80,11 @@ export default function UploadForm({ author }: { author: string }) {
     const meta = text.match(FRONTMATTER)?.[1] ?? "";
     text = text.replace(FRONTMATTER, "").trim();
     setBody(text);
-    if (!title) setTitle(meta.match(/^title:\s*["']?(.+?)["']?\s*$/m)?.[1] ?? titleFromFilename(chosen.name));
+    if (!title) setTitle(metaValue(meta, "title") || text.match(/^#\s+(.+)$/m)?.[1] || titleFromFilename(chosen.name));
+    if (!abstract) setAbstract(metaValue(meta, "abstract") || firstSentence(text));
+    if (keywords.length === 0) setKeywords(metaList(meta, "keywords", "tags"));
+    const metaPrice = metaValue(meta, "price_usd");
+    if (metaPrice) setPrice(metaPrice);
     if (!readable) setError("Only .md and .txt files can be uploaded for now.");
   }
 

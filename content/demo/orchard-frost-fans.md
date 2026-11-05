@@ -1,9 +1,9 @@
 ---
+# Invented draft for the demo. See README.md in this folder.
 title: Why Halden Valley orchards run their frost fans at 2.4 degrees
-abstract: The temperature threshold one fictional valley's apple growers settled on after the 2019 frost, and why it isn't zero. Draft demo piece.
+abstract: "The temperature one valley's apple growers settled on after the 2019 frost, and why it isn't zero."
+keywords: [frost, orchards, apples, Halden Valley]
 ---
-
-DRAFT DEMO PIECE. This valley and its growers are invented for the Toll Gate demo. Replace with real writing.
 
 Most guides tell apple growers to start frost fans when the air reaches freezing. In Halden Valley, nobody does. The growers' cooperative starts its fans at 2.4 degrees Celsius, measured at canopy height, and the reason goes back to one bad night in April 2019.
 
