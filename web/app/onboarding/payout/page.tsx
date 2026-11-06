@@ -14,7 +14,6 @@ export default function PayoutPage() {
       <main className="centered">
         <div className="stack stack-medium">
           <h1>Add a payout method</h1>
-          <p className="muted">Agents pay you each time they read your work. You can change this later.</p>
           <PayoutForm />
         </div>
       </main>
