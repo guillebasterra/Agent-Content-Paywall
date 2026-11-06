@@ -89,6 +89,8 @@ input.input-pill { width: 240px; max-width: 100%; }
 .option input { margin: 2px 0 0; width: 18px; height: 18px; accent-color: var(--ink); flex: none; }
 .option-text { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .option-name { font-size: 17px; font-weight: 500; }
+.option-card { flex-direction: column; cursor: default; }
+.option-card .input { width: 100%; height: auto; margin: 0; }
 .skip { align-self: center; padding: 8px 12px; font-size: 14px; color: var(--muted); }
 
 /* Dashboard */

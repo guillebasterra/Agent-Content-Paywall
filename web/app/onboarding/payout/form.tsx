@@ -106,48 +106,45 @@ export default function PayoutForm() {
       </div>
 
       <div className="field-group">
-        <div className={address.trim() ? "option option-on" : "option"}>
+        <span className="label-muted">How you get paid · set up one or both</span>
+
+        <div className={address.trim() ? "option option-card option-on" : "option option-card"}>
           <span className="option-text">
             <span className="option-name">XRP Ledger</span>
-            <span className="muted small">Wallet address · XRP · paid on every read</span>
+            <span className="muted small">Paid in XRP on every read</span>
           </span>
+          <input
+            id="addr"
+            aria-label="XRP Ledger wallet address"
+            className="input mono"
+            type="text"
+            placeholder="Wallet address (r…)"
+            spellCheck={false}
+            autoComplete="off"
+            value={address}
+            onChange={(event) => setAddress(event.target.value)}
+          />
         </div>
-        <label htmlFor="addr" className="label-muted">Wallet address</label>
-        <input
-          id="addr"
-          className="input input-large mono"
-          type="text"
-          placeholder="r…"
-          spellCheck={false}
-          autoComplete="off"
-          value={address}
-          onChange={(event) => setAddress(event.target.value)}
-        />
-        <button type="button" className="button button-outline button-large" disabled title="Coming soon">
-          Connect Xaman instead
-        </button>
-      </div>
 
-      <div className="field-group">
-        <div className={stripe?.connected ? "option option-on" : "option"}>
+        <div className={stripe?.connected ? "option option-card option-on" : "option option-card"}>
           <span className="option-text">
             <span className="option-name">Stripe</span>
             <span className="muted small">
-              {stripe?.connected ? "Connected · USD · test mode" : "Bank account · USD · test mode"}
+              {stripe?.connected ? "Connected · paid in USD · test mode" : "Paid in USD to your bank · test mode"}
             </span>
           </span>
+          {!stripe?.connected && (
+            <button
+              type="button"
+              className="button button-outline"
+              disabled={busy !== "" || !stripe?.available}
+              title={stripe && !stripe.available ? "Stripe is not configured on this server" : undefined}
+              onClick={connectStripe}
+            >
+              {busy === "stripe" ? "Opening Stripe…" : "Connect with Stripe"}
+            </button>
+          )}
         </div>
-        {!stripe?.connected && (
-          <button
-            type="button"
-            className="button button-outline button-large"
-            disabled={busy !== "" || !stripe?.available}
-            title={stripe && !stripe.available ? "Stripe is not configured on this server" : undefined}
-            onClick={connectStripe}
-          >
-            {busy === "stripe" ? "Opening Stripe…" : "Connect with Stripe"}
-          </button>
-        )}
       </div>
 
       {error && <p className="error" role="alert">{error}</p>}
