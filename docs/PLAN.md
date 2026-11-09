@@ -98,3 +98,4 @@ What Option B needs:
 - x402 on Stripe: live acceptance is gated by review. A sandbox path exists using Base Sepolia and the public `x402.org` facilitator.
 - MPP / Shared Payment Tokens: no sign-up form, `link-cli --test`, needs agent OAuth and per-spend approval.
 - Neither replaces prepaid credit tonight. Both go in docs as the upgrade path.
+- Nov 9: MPP works in the sandbox (SPT and Tempo charges). Sessions are blocked by a $0.50 minimum when recording settlements. Details in `MPP.md`.
