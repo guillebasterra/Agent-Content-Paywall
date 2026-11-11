@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { type StripeStatus, errorMessage } from "@/lib/api";
+import { PAYMENT_RAIL, type Payout, type StripeStatus, errorMessage, usd } from "@/lib/api";
 import { writerFetch } from "@/lib/api-client";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -16,6 +16,9 @@ export default function PayoutForm() {
   const [stripe, setStripe] = useState<StripeStatus | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"" | "saving" | "stripe">("");
+  const [rail, setRail] = useState<"base" | "xrpl">(PAYMENT_RAIL);
+  const [balance, setBalance] = useState(0);
+  const onBase = rail === "base";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -24,9 +27,12 @@ export default function PayoutForm() {
       try {
         const response = await writerFetch("/me/payout", { signal: controller.signal });
         if (!response.ok) return;
-        const payout = await response.json();
+        const payout: Payout = await response.json();
+        setRail(payout.payment.rail);
+        setBalance(payout.balance_usd_micros);
         // Keep anything typed while this was loading.
-        if (payout.xrpl_address) setAddress((typed) => typed || payout.xrpl_address);
+        const saved = payout.xrpl_address;
+        if (saved) setAddress((typed) => typed || saved);
         if (payout.name) setName((typed) => typed || payout.name);
         setStripe(payout.stripe);
         if (returned && payout.stripe.available) {
@@ -47,7 +53,8 @@ export default function PayoutForm() {
       setError(await errorMessage(profile));
       return false;
     }
-    if (!address.trim()) return true;
+    // On Base, Toll Gate holds earnings, so there is no address to save.
+    if (onBase || !address.trim()) return true;
     const payout = await writerFetch("/me/payout", {
       method: "PUT",
       headers: JSON_HEADERS,
@@ -105,6 +112,22 @@ export default function PayoutForm() {
         />
       </div>
 
+      {onBase ? (
+        <div className="field-group">
+          <span className="label-muted">How you get paid</span>
+          <div className="option option-card option-on">
+            <span className="option-text">
+              <span className="option-name">Toll Gate balance · {usd(balance)}</span>
+              <span className="muted small">
+                Agents pay in USDC on Base. Toll Gate holds it and credits you on every read. No wallet needed.
+              </span>
+            </span>
+            <button type="button" className="button button-outline" disabled title="Withdrawals are coming soon">
+              Withdraw · coming soon
+            </button>
+          </div>
+        </div>
+      ) : (
       <div className="field-group">
         <span className="label-muted">How you get paid · set up one or both</span>
 
@@ -146,6 +169,7 @@ export default function PayoutForm() {
           )}
         </div>
       </div>
+      )}
 
       {error && <p className="error" role="alert">{error}</p>}
 

@@ -3,17 +3,16 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { type Dashboard, type Read, count, reads, shortAddress, timeAgo, txUrl, usd } from "@/lib/api";
+import { type Dashboard, type Read, count, railName, reads, shortAddress, timeAgo, txUrl, usd } from "@/lib/api";
 import { writerFetch } from "@/lib/api-client";
 import { setPendingUpload } from "@/lib/pending-upload";
 
 const POLL_MS = 3000;
 
 function railLabel(read: Read) {
-  if (read.rail === "xrpl") {
-    return <a href={txUrl(read.tx_hash)} target="_blank" rel="noreferrer">XRPL ↗</a>;
-  }
-  return "Stripe credit";
+  const url = txUrl(read);
+  if (!url) return railName(read);
+  return <a href={url} target="_blank" rel="noreferrer">{read.rail === "base" ? "BaseScan" : "XRPL"} ↗</a>;
 }
 
 function UploadDrop() {
@@ -107,27 +106,54 @@ export default function DashboardView() {
     );
   }
 
+  const onBase = data.payment.rail === "base";
+  const latestUrl = data.latest ? txUrl(data.latest) : null;
+
   return (
     <main className="page page-dashboard">
       {failed && <p className="error" role="alert">Connection lost. Showing the last data received.</p>}
 
       <div className="overview">
         <div className="stats">
-          <section aria-label="Pieces on the site" className="stat">
-            <span className="muted">Pieces on the site</span>
-            <span className="stat-value">{count(data.pieces.length)}</span>
-            <span className="muted small">{reads(data.totals.reads)}</span>
-          </section>
-          <section aria-label="Earned" className="stat">
-            <span className="muted">Earned</span>
-            <span className="stat-value">{usd(data.totals.earned_usd_micros)}</span>
+          <section aria-label="Balance earned" className="stat">
+            <span className="muted">Balance earned</span>
+            <span className="stat-value">{usd(onBase ? data.balance_usd_micros : data.totals.earned_usd_micros)}</span>
             {data.latest && (
               <span key={data.latest.tx_hash} className="latest">
                 <span className="latest-dot" aria-hidden="true" />
-                +{usd(data.latest.amount_usd_micros)} from {data.latest.agent} {now ? timeAgo(data.latest.created_at, now) : ""}
+                <span>
+                  +{usd(data.latest.amount_usd_micros - data.latest.fee_usd_micros)} from {data.latest.agent}{" "}
+                  {now ? timeAgo(data.latest.created_at, now) : ""}
+                </span>
+                {latestUrl && (
+                  <a href={latestUrl} target="_blank" rel="noreferrer">
+                    {data.latest.rail === "base" ? "BaseScan" : "XRPL"} ↗
+                  </a>
+                )}
               </span>
             )}
-            {data.balance_usd_micros > 0 && <span className="muted small">{usd(data.balance_usd_micros)} Stripe balance</span>}
+            {onBase ? (
+              <span className="balance-actions">
+                <span className="muted small">USDC, held for you by Toll Gate</span>
+                <button type="button" className="button button-outline button-small" disabled title="Withdrawals are coming soon">
+                  Withdraw · coming soon
+                </button>
+              </span>
+            ) : (
+              data.balance_usd_micros > 0 && <span className="muted small">{usd(data.balance_usd_micros)} Stripe balance</span>
+            )}
+          </section>
+          <section aria-label="Reads" className="stat">
+            <span className="muted">Reads</span>
+            <span className="stat-value">{count(data.totals.reads)}</span>
+            <span className="muted small">{count(data.pieces.length)} {data.pieces.length === 1 ? "piece" : "pieces"} on the site</span>
+            {data.by_agent.length > 0 && (
+              <span className="chips" aria-label="Reads by agent">
+                {data.by_agent.map((agent) => (
+                  <span key={agent.name} className="chip">{agent.name} · {reads(agent.reads)}</span>
+                ))}
+              </span>
+            )}
           </section>
         </div>
         <UploadDrop />
@@ -189,7 +215,7 @@ export default function DashboardView() {
                     <td className="piece-title">{read.title}</td>
                     <td><span className="chip">{read.agent}</span></td>
                     <td>{railLabel(read)}</td>
-                    <td className="number strong">{usd(read.amount_usd_micros)}</td>
+                    <td className="number strong">{usd(read.amount_usd_micros - read.fee_usd_micros)}</td>
                     <td className="number muted">{now ? timeAgo(read.created_at, now) : ""}</td>
                   </tr>
                 ))}
@@ -199,6 +225,23 @@ export default function DashboardView() {
         </section>
       )}
 
+      {onBase ? (
+        <p className="dashboard-note muted small">
+          <Link href="/onboarding/payout">Your profile</Link>
+          <span>
+            Agents pay in USDC on Base to Toll Gate&apos;s treasury
+            {data.payment.pay_to && (
+              <>
+                {" "}
+                <a className="mono" href={`https://basescan.org/address/${encodeURIComponent(data.payment.pay_to)}`} target="_blank" rel="noreferrer">
+                  {shortAddress(data.payment.pay_to)} ↗
+                </a>
+              </>
+            )}
+            . Each read is credited to you.
+          </span>
+        </p>
+      ) : (
       <p className="dashboard-note muted small">
         <Link href="/onboarding/payout">
           {data.payout.xrpl_address || data.payout.stripe.connected ? (
@@ -214,6 +257,7 @@ export default function DashboardView() {
         </Link>
         <span>XRP amounts use a placeholder rate: 1 XRP = ${data.xrp_usd_rate}</span>
       </p>
+      )}
     </main>
   );
 }

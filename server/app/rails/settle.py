@@ -27,6 +27,7 @@ class Settlements:
             "pay_to": sale.pay_to,
             "payer": sale.payer,
             "network": sale.network,
+            "agent": sale.agent,
             **sale.receipt_fields,
         })
 
@@ -45,6 +46,7 @@ class Settlements:
             receipt=receipt,
             agent=sale.agent,
             credit_writer=sale.credit_writer,
+            fee_usd_micros=sale.fee_usd_micros,
             debit_agent_id=debit_agent_id,
         )
 

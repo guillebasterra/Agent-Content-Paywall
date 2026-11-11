@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import Tile from "@/components/tile";
-import { XRP_USD_RATE, count, errorMessage } from "@/lib/api";
+import { PAYMENT_RAIL, XRP_USD_RATE, count, errorMessage } from "@/lib/api";
 import { writerFetch } from "@/lib/api-client";
 import { takePendingUpload } from "@/lib/pending-upload";
 
@@ -256,7 +256,11 @@ export default function UploadForm({ author }: { author: string }) {
                 <span className="muted">$</span>
                 <input id="price" type="text" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} />
               </div>
-              {priceXrp && <span className="muted small">≈ {priceXrp} XRP on the XRP Ledger</span>}
+              {PAYMENT_RAIL === "base" ? (
+                <span className="muted small">Agents pay in USDC. Toll Gate credits you per read</span>
+              ) : (
+                priceXrp && <span className="muted small">≈ {priceXrp} XRP on the XRP Ledger</span>
+              )}
             </div>
             <div className="field">
               <label htmlFor="train" className="label">Training license</label>

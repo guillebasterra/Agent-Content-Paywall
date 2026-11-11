@@ -1,101 +1,39 @@
-# Toll Gate — build plan (demo: Nov 5, 2026)
+# Toll Gate — plan: payment design v2 (Nov 11, 2026)
 
-Executes `docs/BRIEF.md`. One branch per milestone. All tests pass before each merge to `main`, then push. Demo steps 1–5 stay working at every merge.
+The v1 plan (M1–M6: Supabase, USD pricing, `PaymentRail`, Stripe credit, buyer MCP on two rails) is done; see git history before `e3f1070`. This plan replaces it.
 
-## Milestones
+## The demo
+1. Guillermo asks Claude Desktop a niche question.
+2. Claude finds the article through the Toll Gate MCP (discovery only, no browser).
+3. Claude pays through Coinbase's payments-mcp (`make_http_request_with_x402`), x402 v2 on Base mainnet, USDC.
+4. Claude answers, quoting the article and its signed receipt.
+5. The writer dashboard shows the money, reads +1 and a BaseScan link.
 
-### M1 — Baseline (`m1-baseline`)
-- Fast-forward `phase-5-web` into `main`.
-- `make demo-reset`: wipes writers, articles, purchases and the buyer spend log. Keeps wallets and keys.
-- Move the placeholder article out of auto-import to `content/demo/`, so the dashboard and catalog start empty.
-- Two demo pieces to upload (`content/demo/`), clearly marked as drafts for Guillermo to replace.
-- Catalog search matches any word of the query, so natural agent queries find something.
-- `docs/DEMO.md`: startup commands, Claude Desktop config, pre-flight checklist, t54 fallback.
+## Design
+- **Agents pay Toll Gate's treasury** (a CDP server wallet on Base). The ledger credits the writer, minus `PLATFORM_FEE_BPS` (default 0). Writers need no wallet.
+- **One active rail per server**, `PAYMENT_RAIL=base|xrpl` (default `base`).
+  - `base`: official `x402[evm,fastapi]` middleware, CDP facilitator, `eip155:8453`, `exact`, payTo = `TREASURY_BASE_ADDRESS`, price = the article's USD price as USDC atomic units (micro-dollars and USDC units are the same integer, so no conversion).
+  - `xrpl`: the existing XRPL rail (plus Stripe credit if configured), unchanged. This is the fallback demo.
+- Only `GET /articles/{id}` is paid. Unknown ids are 404 and disallowed agents 403, both before any payment.
+- After settlement, the existing step runs: Ed25519 receipt (tx hash, BaseScan link, content hash, license, amount, payer, agent), purchase row, ledger credit.
+- Amounts in the receipt and purchase come from the signed payment (`accepted`), as on XRPL.
+- Agent name: `X-Agent-Name`, else User-Agent (anything containing "claude" → `Claude`), else `unknown`.
 
-### M2 — Supabase auth and Postgres (`m2-supabase`)
-- `AUTH_MODE=demo|supabase`. Demo mode is unchanged and stays the fallback.
-- Backend: `current_writer()` verifies the JWT and maps `sub` to a `writers` row, created on first login.
-  - ES256/RS256: local check against JWKS, with issuer, audience and expiry.
-  - HS256 (legacy project): ask the Auth server (`/auth/v1/user`), as Supabase recommends. No shared secret is stored, which also rules out algorithm confusion.
-- Database: one `Database` class on SQLite or Postgres (psycopg + pool). Same schema. Tests run against both, using a local embedded Postgres.
-- **RLS on every table with no policies.** Supabase exposes `public` through the anon key, so without this anyone could read article bodies and key hashes from the browser.
-- `scripts/migrate_to_postgres.py` copies existing SQLite rows.
-- Storage: originals go to the private `uploads` bucket, best-effort (the body is in the DB, so a Storage outage doesn't block publishing).
-- Web: `@supabase/ssr`, `proxy.ts`, `/auth/callback`, code-entry step on `/signin`, sign-out. Remove Google, stub the XRPL wallet button. Bearer token on API calls.
-- Author name field on onboarding, since the agent cites it and an email can't supply it.
-- `make demo-otp`: generates a code through the admin API without sending an email. Used by automated runs and as the demo fallback if the email limit is hit.
-
-### M3 — USD pricing and `PaymentRail` (`m3-rails`)
-- USD is canonical, stored as integer micro-dollars (`price_usd_micros` etc.), matching how drops are stored. Floats never touch money, and SQLite has no decimal type. The API exposes `price_usd` strings.
-- Drops are computed per invoice from `XRP_USD_RATE`, rounded up to a whole drop.
-- `server/app/rails/`: `PaymentRail` interface, XRPL rail moved onto it. Both settle through one function: sign receipt, write purchase, write ledger.
-- Treasury: a writer with no address gets `payTo` = treasury and is credited in the ledger. `make wallets` creates the treasury wallet.
-- Migration for old rows, at the rate the UI already used (1 XRP = $2).
-- Upload and all screens in USD, XRP as secondary text.
-- Buyer MCP: budget and caps in USD (`buy_article(id, max_price_usd)`), still pinned to exact drops on the XRPL rail.
-
-### M4 — Stripe rail (`m4-stripe`)
-- Refuses anything but test keys at startup.
-- Agent accounts: `POST /agents` returns a `tg_test_...` key once; only the hash is stored.
-- Top-up: Checkout Session → webhook (`stripe listen`) credits the agent. The success page also reconciles from Stripe, using the same idempotent function, so the demo survives a dead listener.
-- `GET /articles/{id}` with a bearer key: atomic debit in one transaction with purchase and ledger entries. Invalid key 401, low credit 402 with no body, `X-Max-Price-Usd` as a hard cap mirroring x402's `max_value`.
-- The 402 body lists `stripe-credit` under `alternatives`, outside `accepts`, so x402 clients are unaffected. A test runs the SDK's parser against it.
-- Connect Express onboarding, status on the payout screen and dashboard, `make payout` creating test Transfers (idempotent).
-- Dashboard: both payout methods, Stripe balance, recent reads with rail. `/llms.txt`: both options.
-
-### M5 — Buyer MCP on Stripe (`m5-buyer-stripe`)
-- `BUYER_RAIL=xrpl|stripe`. Same budget book, approval and hold-on-ambiguity rules on both rails.
-- Rail is read from `.env` on each call, so `make rail RAIL=stripe` switches without restarting Claude Desktop.
-- Key stays in the process, never in tool output.
-
-### M6 — Full demo run (`m6-demo-run`)
-- Steps 1–7 in Supabase mode, live: real OTP, Stripe test onboarding, testnet purchase, Stripe test purchase, payout. Fix what breaks.
-- The MCP is driven over stdio, as Desktop does. Claude Desktop itself needs a human pass (see Risks).
-
-## What Guillermo must provide
-Nothing else blocks on him. Mock-tested code merges without these; live checks wait for them.
-- **Supabase**: project URL, publishable key, service role key, session pooler DB URL. Dashboard: `http://localhost:3000/auth/callback` in redirect URLs. The email template stays default (editing it needs custom SMTP), so `make demo-otp` supplies codes.
-- **Stripe**: test secret key, Connect enabled on the account. `make stripe-listen` uses the key, so `stripe login` isn't needed.
-
-## Decisions the brief leaves open
-- **Second piece for step 6**: the writer uploads two files. "My Stripe balance accrues" needs the piece to be theirs, and step 3 needs an empty dashboard, so nothing can be pre-seeded.
-- **Writer balance sources**: Stripe-rail reads and treasury-routed XRPL reads both accrue. Payouts go only through Stripe Connect; without an account the balance waits.
-- **Stripe-rail agent name** comes from the authenticated account, not `X-Agent-Name`.
-- **`tx_hash` column** holds the chain hash or the Stripe-credit ref; `rail` says which (the brief's "tx_hash or stripe ref").
-- **Server-side re-reads are charged again.** The buyer MCP's saved copy is what makes re-buying free, as on XRPL. Receipts as access tokens are on the Later list.
+## Milestones (branch `guillebasterra/base-x402`, merged to `main` when green)
+1. **Treasury**: `scripts/treasury.py` (`make treasury`), CDP `get_or_create_account(name="tollgate-treasury")`, writes `TREASURY_BASE_ADDRESS`. `--check` is read-only for pre-flight. Done: `0xdef6b98CD666aA0d43125FAF320Db60999D01913`.
+2. **Server rail**: `rails/base_usdc.py` wraps the SDK middleware inside our paywall. Dynamic price via a callable. Resource URL pinned to `TOLLGATE_API_URL`. 402 body repeats the challenge in JSON for agents that read bodies. Fee column on purchases; ledger credit net of fee.
+3. **Tests**: a fake facilitator (no network). Assert the v2 `PAYMENT-REQUIRED` header decodes with the SDK, `eip155:8453`, payTo = treasury, amount = price in atomic USDC. Then the official x402 Python client (`x402Client` + `ExactEvmClientScheme`, throwaway key, no funds) parses the 402, signs, and gets the body and receipt back.
+4. **Buyer MCP → Toll Gate MCP**: discovery only (`search_catalog`, `get_article`), no wallet, no payments. Instructions point Claude at payments-mcp with `X-Agent-Name: Claude`.
+5. **Web**: dashboard (balance, reads, latest with BaseScan link, reads by agent, disabled Withdraw), payout screen without a wallet, rail-aware copy.
+6. **Ops**: `make demo-reset` keeps writers and articles, clears purchases and balances. `make preflight`. `/llms.txt` describes the Base flow.
+7. **Docs**: `DEMO.md`, `CLAUDE.md`, `BRIEF.md` ("Payment design v2").
 
 ## Risks
 | Risk | Plan |
 |---|---|
-| Supabase built-in email allows only a few sends per hour, and its template can't include a code | Rehearse and demo with `make demo-otp`, which sends nothing. The emailed magic link also works |
-| Stripe balance is pending after a normal test card, so Transfers fail | Top up with `4000 0000 0000 0077` (funds available immediately). In DEMO.md |
-| Stripe refused Express (`type` and `controller`) for this sandbox | Happened. Now Accounts v2 with an Express dashboard, Stripe collecting fees and losses |
-| Stripe onboarding shows a CAPTCHA | Happened. Not automatable, so a human does it |
-| Claude Desktop may not support elicitation | Approval fails closed. $0.40 is under the $1 threshold, so the core flow doesn't need it |
-| Claude Desktop can't be driven from here | Stdio run covers the MCP. Guillermo does one Desktop pass before the demo |
-| t54 facilitator down | Fallback in DEMO.md: Stripe rail, and a backup recording |
-| Sync Postgres calls in async middleware | Fine for one demo user. Noted for production |
-| Pooler connection limits or latency on the 3s dashboard poll | Small pool, prepared statements off |
-
-## Open decision: how to show the agent buying
-Guillermo's call. He doesn't want to force Claude Desktop. Nothing is deployed, and the brief lists production deploy as a non-goal, so don't deploy until he says so.
-
-Reading the site is easy for any agent. Paying is the constraint: a fetch-only chat agent probably can't send an auth header or a signed payment, and the XRPL seed must never reach the model.
-
-- **Option A, no deploy:** Claude Code in a terminal against `localhost`, using the prompts in `DEMO.md` or the instruction below. Works with today's code, but needs a rehearsal with a real model.
-- **Option B, recommended if time allows:** deploy, then tell Claude Code: "Read https://<site>/llms.txt, then find out how the 1987 Tidewater ferry strike ended. Buy what you need and cite it." It pays by Stripe credit with an API key. The XRPL purchase uses the buyer MCP running locally, pointed at the live site. Keep the local setup and a recording as fallbacks.
-
-What Option B needs:
-- Rotated keys first
-- Hosts, for example Vercel for the web app and Render or Fly for the API, run as a single instance because XRPL invoices are held in memory
-- The allowed CORS origin, hardcoded to localhost in `main.py`, made configurable
-- `TOLLGATE_API_URL`, `TOLLGATE_WEB_URL` and `NEXT_PUBLIC_TOLLGATE_API_URL` set to the live URLs
-- The live callback URL in Supabase's redirect list
-- A Stripe webhook endpoint in place of `stripe listen`
-- A decision on public exposure: open agent sign-up, writer uploads and no rate limiting. Take it down or lock it down after the demo
-
-## Stripe machine payments (checked Nov 4)
-- x402 on Stripe: live acceptance is gated by review. A sandbox path exists using Base Sepolia and the public `x402.org` facilitator.
-- MPP / Shared Payment Tokens: no sign-up form, `link-cli --test`, needs agent OAuth and per-spend approval.
-- Neither replaces prepaid credit tonight. Both go in docs as the upgrade path.
-- Nov 9: MPP works in the sandbox (SPT and Tempo charges). Sessions are blocked by a $0.50 minimum when recording settlements. Details in `MPP.md`.
+| **payments-mcp sends the paid request from Coinbase's servers** (`payments-mcp.coinbase.com/api/proxy`), so `localhost` is unreachable | The API needs a public HTTPS URL: a tunnel (cloudflared/ngrok) or a deploy. Guillermo's call. `TOLLGATE_API_URL` drives every paid URL. Pre-flight checks it from outside |
+| x402-xrpl pins `fastapi<0.116`; x402 needs Starlette ≥ 1.3 | uv `override-dependencies`. All 237 XRPL/Stripe tests pass on FastAPI 0.162 / Starlette 1.10 |
+| payments-mcp uses a smart wallet (ERC-1271/6492 signatures) | The CDP facilitator verifies them. Our server never checks signatures itself |
+| Real USDC on mainnet | Tests use a fake facilitator. Nothing here signs from the treasury. The first live buy is Guillermo's |
+| The proxy's User-Agent isn't Claude's | The MCP tells Claude to send `X-Agent-Name: Claude` in `headers` (payments-mcp forwards them) |
+| CDP facilitator down | Fallback: `PAYMENT_RAIL=xrpl` and the XRPL testnet flow in `DEMO.md` |

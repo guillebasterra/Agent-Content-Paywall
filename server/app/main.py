@@ -1,7 +1,8 @@
 """Toll Gate API.
 
-Free:   GET /catalog, GET /ledger, GET /llms.txt, GET /.well-known/tollgate-receipt-key
-Paid:   GET /articles/{id}  (x402 over XRPL, or prepaid credit with an agent key)
+Free:   GET /catalog, GET /catalog/{id}, GET /ledger, GET /llms.txt, GET /.well-known/tollgate-receipt-key
+Paid:   GET /articles/{id}  (PAYMENT_RAIL=base: x402 v2, USDC on Base, to the treasury.
+                             PAYMENT_RAIL=xrpl: x402 on XRPL testnet, or prepaid Stripe credit)
 Writer: GET/PUT /me/payout, PUT /me/profile, GET /me/dashboard, POST /articles, POST /me/stripe/*
 Agent:  POST /agents, GET /agents/me, POST /agents/me/topups
 Stripe: POST /webhooks/stripe, GET /agents/topup/done
@@ -26,6 +27,7 @@ from . import config
 from .content import content_hash, format_usd, preview_text, seed_articles, slugify, to_micros, to_xrp, usd_to_drops
 from .db import Database
 from .paywall import agent_name, paywall
+from .rails.base_usdc import BaseUsdcRail
 from .rails.settle import Settlements
 from .rails.stripe_credit import StripeCreditRail, bearer_key, hash_key, new_api_key
 from .rails.xrpl import XrplRail, pay_to_address
@@ -86,6 +88,11 @@ def _signing_key() -> str:
     return key
 
 
+def pay_to_for(article: dict) -> str | None:
+    """Where an agent's money goes: the treasury on Base, or the writer (or XRPL treasury) on XRPL."""
+    return config.TREASURY_BASE_ADDRESS if config.PAYMENT_RAIL == "base" else pay_to_address(article)
+
+
 def listing(article: dict) -> dict:
     """The free view of an article. The body must never be added here."""
     train = article["train_price_usd_micros"]
@@ -107,7 +114,7 @@ def listing(article: dict) -> dict:
         "license": article["license"],
         "train_price_usd": format_usd(train) if train else None,
         "allowed_agents": article["allowed_agents"],
-        "pay_to": pay_to_address(article),
+        "pay_to": pay_to_for(article),
         "reads": article["reads"],
         "earned_usd": format_usd(article["earned_usd_micros"]),
         "earned_usd_micros": article["earned_usd_micros"],
@@ -149,9 +156,58 @@ def _usd_field(name: str, value: str) -> int:
         raise HTTPException(422, f"{name}: {exc}") from None
 
 
+def _licenses() -> str:
+    return "\n".join(f"- {name}: {meaning}" for name, meaning in LICENSES.items())
+
+
 def _llms_txt() -> str:
+    return _llms_txt_base() if config.PAYMENT_RAIL == "base" else _llms_txt_xrpl()
+
+
+def _llms_txt_base() -> str:
     base = config.PUBLIC_URL
-    licenses = "\n".join(f"- {name}: {meaning}" for name, meaning in LICENSES.items())
+    return f"""# Toll Gate
+
+Articles sold to AI agents per read. Prices are in US dollars and paid in USDC on Base.
+Writers are paid by Toll Gate: your payment goes to Toll Gate's treasury, and the writer is credited in Toll Gate's ledger.
+
+## Search (free)
+
+GET {base}/catalog?q=<text>&sort=reads|earned|new
+Returns title, author, abstract, free preview, keywords, price_usd, license and url for each article.
+The preview is free to quote. The full text is paid.
+
+## Buy one read (x402 v2)
+
+Network: {config.BASE_NETWORK} (Base mainnet). Asset: USDC. Scheme: exact. Pay to: {config.TREASURY_BASE_ADDRESS}.
+The amount is the article's price_usd in USDC atomic units (6 decimals): $0.40 is 400000.
+
+1. GET {base}/articles/<id> with an X-Agent-Name header naming your agent (for example "Claude").
+2. The response is 402. The PAYMENT-REQUIRED header holds the x402 v2 challenge (base64 JSON): accepts[0] has scheme, network, amount, asset and payTo.
+3. Sign the USDC authorization and repeat the GET with it in a PAYMENT-SIGNATURE header. Any x402 v2 client does steps 2 and 3, for example Coinbase's payments-mcp (make_http_request_with_x402) or the x402 SDKs.
+4. The response is 200 with the article body and a signed receipt. The PAYMENT-RESPONSE header carries the settlement and transaction hash.
+
+A 403 means the writer does not sell this article to your agent: check allowed_agents in the catalog first. A 404 means no such article. Neither costs anything.
+Each read is charged, so keep your copy.
+
+## Licenses
+
+{_licenses()}
+
+Each article's license field says which one applies.
+
+## Receipts
+
+Each purchase returns an Ed25519-signed receipt: article id, title, content hash, license, amount in USD, payer, agent, the Base transaction hash and its BaseScan link.
+Cite the title, author and receipt when you use the text.
+Verify the receipt with the public key at {base}/.well-known/tollgate-receipt-key.
+The signature covers the payload as JSON with sorted keys and no whitespace.
+"""
+
+
+def _llms_txt_xrpl() -> str:
+    base = config.PUBLIC_URL
+    licenses = _licenses()
     return f"""# Toll Gate
 
 Articles sold to AI agents per read. Prices are in US dollars.
@@ -208,6 +264,25 @@ def _default_auth():
     return SupabaseAuth(config.SUPABASE_URL, config.SUPABASE_PUBLISHABLE_KEY)
 
 
+def _default_base_facilitator():
+    """The CDP facilitator, authenticated with the CDP API key. Needed for Base mainnet."""
+    if not (config.CDP_API_KEY_ID and config.CDP_API_KEY_SECRET):
+        raise RuntimeError("CDP_API_KEY_ID and CDP_API_KEY_SECRET are required when PAYMENT_RAIL is base")
+    from cdp.x402 import create_facilitator_config
+    from x402.http import HTTPFacilitatorClient
+
+    return HTTPFacilitatorClient(create_facilitator_config(config.CDP_API_KEY_ID, config.CDP_API_KEY_SECRET))
+
+
+def _payment_info() -> dict:
+    if config.PAYMENT_RAIL == "base":
+        return {"rail": "base", "protocol": "x402 v2", "scheme": "exact", "network": config.BASE_NETWORK,
+                "asset": "USDC", "pay_to": config.TREASURY_BASE_ADDRESS, "explorer_tx": config.BASESCAN_TX,
+                "fee_bps": config.PLATFORM_FEE_BPS}
+    return {"rail": "xrpl", "protocol": "x402", "scheme": "exact", "network": config.NETWORK, "asset": "XRP",
+            "explorer_tx": config.EXPLORER_TX}
+
+
 def _default_stripe() -> StripeGateway | None:
     if config.STRIPE_SECRET_KEY:
         return StripeGateway(config.STRIPE_SECRET_KEY, config.STRIPE_WEBHOOK_SECRET)
@@ -228,9 +303,11 @@ def create_app(
     auth=None,
     storage: SupabaseStorage | None = None,
     stripe_gateway: StripeGateway | None = None,
+    base_facilitator=None,
 ) -> FastAPI:
     auth = auth or _default_auth()
-    if isinstance(auth, DemoAuth) and not config.WRITER_ADDRESS:
+    on_base = config.PAYMENT_RAIL == "base"
+    if isinstance(auth, DemoAuth) and not on_base and not config.WRITER_ADDRESS:
         raise RuntimeError("WRITER_ADDRESS missing — run `make wallets` first")
 
     db = Database(database or config.database_target())
@@ -247,23 +324,31 @@ def create_app(
             db.add_article(row)
 
     signer = ReceiptSigner(_signing_key())
-    facilitator = facilitator or AsyncFacilitatorClient(
-        FacilitatorClientOptions(base_url=config.FACILITATOR_URL, timeout_seconds=60)
-    )
 
     app = FastAPI(title="Toll Gate")
     app.state.db, app.state.signer, app.state.auth = db, signer, auth
 
     settlements = Settlements(db, signer)
-    # First match wins, and the XRPL rail takes anything, so it goes last.
-    rails = [XrplRail(facilitator, settlements, agent_name)]
-    if gateway:
-        rails.insert(0, StripeCreditRail(db, settlements))
+    if on_base:
+        # The demo path: one rail, no Stripe. XRPL stays in the code as the fallback.
+        rails = [BaseUsdcRail(
+            base_facilitator or _default_base_facilitator(), settlements, agent_name,
+            pay_to=config.TREASURY_BASE_ADDRESS, network=config.BASE_NETWORK, fee_bps=config.PLATFORM_FEE_BPS,
+        )]
+    else:
+        facilitator = facilitator or AsyncFacilitatorClient(
+            FacilitatorClientOptions(base_url=config.FACILITATOR_URL, timeout_seconds=60)
+        )
+        # First match wins, and the XRPL rail takes anything, so it goes last.
+        rails = [XrplRail(facilitator, settlements, agent_name)]
+        if gateway:
+            rails.insert(0, StripeCreditRail(db, settlements))
+    app.state.rails = rails
     app.middleware("http")(paywall(db, rails))
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000"],
+        allow_origins=[config.WEB_URL],  # TOLLGATE_WEB_URL, http://localhost:3000 by default.
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["PAYMENT-REQUIRED", "PAYMENT-RESPONSE"],
@@ -272,7 +357,8 @@ def create_app(
     # --- public routes ---
     @app.get("/health")
     def health():
-        return {"ok": True, "articles": len(db.articles()), "network": config.NETWORK}
+        payment = _payment_info()
+        return {"ok": True, "articles": len(db.articles()), "network": payment["network"], "payment": payment}
 
     @app.get("/catalog")
     def catalog(q: str | None = None, sort: Literal["reads", "earned", "new"] = "reads"):
@@ -280,6 +366,14 @@ def create_app(
         if q:
             items = [i for i in items if _matches(i, q)]
         return {"articles": items}
+
+    @app.get("/catalog/{article_id}")
+    def catalog_item(article_id: str):
+        """One article's free view. Never paid."""
+        a = db.article(article_id)
+        if not a:
+            raise HTTPException(404, "unknown article")
+        return listing(a)
 
     @app.get("/articles/{article_id}")
     def read_article(article_id: str):
@@ -396,6 +490,8 @@ def create_app(
         return {
             **{k: writer[k] for k in ("name", "email", "payout_method", "xrpl_address")},
             "stripe": _stripe_status(writer, gateway),
+            "payment": _payment_info(),
+            "balance_usd_micros": db.writer_balance(writer["id"]),
         }
 
     @app.put("/me/profile")
@@ -445,6 +541,7 @@ def create_app(
                 "stripe": _stripe_status(writer, gateway),
             },
             "xrp_usd_rate": str(config.XRP_USD_RATE),
+            "payment": _payment_info(),
             **db.dashboard(writer["id"]),
         }
 

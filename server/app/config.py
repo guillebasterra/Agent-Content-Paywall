@@ -47,6 +47,26 @@ def database_target() -> Path | str:
     return SUPABASE_DB_URL
 PUBLIC_URL = os.getenv("TOLLGATE_API_URL", "http://localhost:8000").rstrip("/")
 
+# Which rail GET /articles/{id} charges on. base: x402 on Base mainnet (the demo). xrpl: XRPL testnet (the fallback).
+PAYMENT_RAIL = os.getenv("PAYMENT_RAIL", "base").strip() or "base"
+if PAYMENT_RAIL not in {"base", "xrpl"}:
+    raise RuntimeError("PAYMENT_RAIL must be base or xrpl")
+
+# Base: agents pay the treasury (a CDP server wallet) and the ledger credits the writer.
+BASE_NETWORK = os.getenv("BASE_NETWORK", "eip155:8453").strip()
+TREASURY_BASE_ADDRESS = os.getenv("TREASURY_BASE_ADDRESS", "").strip()
+CDP_API_KEY_ID = os.getenv("CDP_API_KEY_ID", "").strip()
+CDP_API_KEY_SECRET = os.getenv("CDP_API_KEY_SECRET", "").strip()
+try:
+    PLATFORM_FEE_BPS = int(os.getenv("PLATFORM_FEE_BPS", "0").strip() or "0")
+except ValueError:
+    raise RuntimeError("PLATFORM_FEE_BPS must be a whole number of basis points") from None
+USDC_BY_NETWORK = {
+    "eip155:8453": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",  # Base mainnet
+    "eip155:84532": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",  # Base Sepolia
+}
+BASESCAN_TX = "https://sepolia.basescan.org/tx/" if BASE_NETWORK == "eip155:84532" else "https://basescan.org/tx/"
+
 # t54's facilitator enforces this SourceTag on XRPL payments it settles.
 SOURCE_TAG = 804681468
 EXPLORER_TX = "https://testnet.xrpl.org/transactions/"

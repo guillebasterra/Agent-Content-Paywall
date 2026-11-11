@@ -222,11 +222,31 @@ def test_receipt_names_the_rail_and_both_amounts(client):
     assert purchase["rail"] == "xrpl" and purchase["amount_usd_micros"] == 1_000_000 and purchase["amount_native"] == 500_000
 
 
-def test_agent_name_is_recorded_and_defaults_to_unknown(client):
+def test_agent_name_is_recorded_and_falls_back_to_the_user_agent(client):
     pay(client, "seeded", agent="Claude")
     pay(client, "seeded")
     agents = [p["agent"] for p in client.get("/ledger").json()["purchases"]]
-    assert agents == ["unknown", "Claude"]
+    assert agents == ["testclient", "Claude"]
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        ({"X-Agent-Name": "Muse", "User-Agent": "Claude-User/1.0"}, "Muse"),
+        ({"User-Agent": "Claude-User/1.0 (+https://anthropic.com)"}, "Claude"),
+        ({"User-Agent": "Mozilla/5.0 (compatible; ClaudeBot/1.0)"}, "Claude"),
+        ({"User-Agent": "python-httpx/0.28"}, "python-httpx"),
+        ({"User-Agent": ""}, "unknown"),
+        ({"X-Agent-Name": " \x00 ", "User-Agent": ""}, "unknown"),
+    ],
+)
+def test_agent_name_rules(headers, expected):
+    from starlette.requests import Request
+
+    from app.paywall import agent_name
+
+    raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+    assert agent_name(Request({"type": "http", "headers": raw})) == expected
 
 
 def test_old_database_gains_agent_column_and_keeps_purchases(facilitator, content, tmp_path):

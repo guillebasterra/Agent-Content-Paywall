@@ -1,4 +1,4 @@
-.PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset demo-otp supabase-setup migrate-db agent topup payout stripe-listen rail web-demo
+.PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset demo-otp supabase-setup migrate-db agent topup payout stripe-listen rail web-demo treasury preflight tunnel test
 
 server:
 	cd server && uv run uvicorn app.main:app --reload --port 8000
@@ -11,6 +11,18 @@ buyer:
 
 buyer-test:
 	cd buyer-mcp && uv run pytest -q
+
+test: server-test buyer-test
+
+# Base demo: the treasury (CDP server wallet), a public URL for payments-mcp, and the pre-flight check.
+treasury:
+	cd server && uv run python ../scripts/treasury.py $(ARGS)
+
+tunnel:
+	cd server && uv run python ../scripts/tunnel.py
+
+preflight:
+	cd server && uv run python ../scripts/preflight.py
 
 web:
 	cd web && npm run dev
@@ -26,7 +38,7 @@ buy-test:
 	cd server && uv run python ../scripts/buy_test.py $(ARGS)
 
 demo-reset:
-	cd server && uv run python ../scripts/demo_reset.py
+	cd server && uv run python ../scripts/demo_reset.py $(ARGS)
 
 demo-otp:
 	cd server && uv run python ../scripts/demo_otp.py $(EMAIL)
@@ -49,7 +61,8 @@ payout:
 stripe-listen:
 	cd server && uv run python ../scripts/stripe_listen.py
 
-# make rail RAIL=stripe  (or xrpl). The buyer MCP picks it up on its next call, no restart needed.
+# Server side: PAYMENT_RAIL=base|xrpl in .env, then restart `make server`.
+# make rail RAIL=stripe  (or xrpl) only mattered to the old paying buyer MCP (tag buyer-mcp-xrpl-v1).
 rail:
 	cd server && uv run python -c "import sys; sys.path.insert(0, '../scripts'); from pathlib import Path; from create_wallets import write_env; write_env(Path('../.env'), {'BUYER_RAIL': '$(RAIL)'})"
 	@echo "buyer rail: $(RAIL)"

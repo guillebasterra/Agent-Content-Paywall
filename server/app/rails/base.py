@@ -13,15 +13,16 @@ class Sale:
 
     rail: str
     article: dict
-    ref: str  # XRPL transaction hash, or the Stripe-credit reference.
+    ref: str  # Chain transaction hash, or the Stripe-credit reference.
     amount_usd_micros: int
-    amount_native: int | None  # Drops on XRPL. Nothing on rails that settle in USD.
+    amount_native: int | None  # Drops on XRPL, USDC atomic units on Base. Nothing for Stripe credit.
     payer: str | None
     pay_to: str
     network: str
     agent: str
     credit_writer: bool  # True when the platform holds the money and owes it to the writer.
     receipt_fields: dict = field(default_factory=dict)
+    fee_usd_micros: int = 0  # The platform's share. The writer is credited the rest.
 
 
 class PaymentRail(Protocol):

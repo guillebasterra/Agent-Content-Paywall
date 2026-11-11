@@ -17,11 +17,24 @@ export type Article = {
   earned_usd_micros: number;
 };
 
-export type Read = { tx_hash: string; rail: string; amount_usd_micros: number; agent: string; created_at: string; title: string };
+export type Read = {
+  tx_hash: string;
+  rail: string;
+  network: string;
+  amount_usd_micros: number;
+  fee_usd_micros: number;
+  agent: string;
+  created_at: string;
+  title: string;
+};
+
+/** How agents pay on this server: x402 on Base (the demo) or XRPL testnet (the fallback). */
+export type Payment = { rail: "base" | "xrpl"; network: string; asset: string; pay_to?: string };
 
 export type StripeStatus = { available: boolean; connected: boolean; payouts_enabled: boolean };
 
 export type Dashboard = {
+  payment: Payment;
   payout: { method: string | null; xrpl_address: string | null; stripe: StripeStatus };
   xrp_usd_rate: string;
   balance_usd_micros: number;
@@ -32,7 +45,18 @@ export type Dashboard = {
   by_agent: { name: string; reads: number; earned_usd_micros: number }[];
 };
 
-export type Payout = { name: string; email: string | null; payout_method: string | null; xrpl_address: string | null; stripe: StripeStatus };
+export type Payout = {
+  name: string;
+  email: string | null;
+  payout_method: string | null;
+  xrpl_address: string | null;
+  stripe: StripeStatus;
+  payment: Payment;
+  balance_usd_micros: number;
+};
+
+/** Fixed at build time from PAYMENT_RAIL, for copy on pages that don't fetch it. */
+export const PAYMENT_RAIL = process.env.NEXT_PUBLIC_PAYMENT_RAIL === "xrpl" ? "xrpl" : "base";
 
 /** Stands in for the paid text, which never reaches the browser. It is only ever shown blurred. */
 export const BLURRED_FILLER =
@@ -56,8 +80,22 @@ export const reads = (n: number) => `${count(n)} ${n === 1 ? "read" : "reads"}`;
 export const shortAddress = (address: string) =>
   address.length > 12 ? `${address.slice(0, 5)}…${address.slice(-4)}` : address;
 
-/** The link is built from the hash, so server data can never supply the URL scheme. */
-export const txUrl = (hash: string) => `https://testnet.xrpl.org/transactions/${encodeURIComponent(hash)}`;
+const EXPLORERS: Record<string, string> = {
+  "eip155:8453": "https://basescan.org/tx/",
+  "eip155:84532": "https://sepolia.basescan.org/tx/",
+};
+
+/** The link is built from the hash, so server data can never supply the URL scheme. Null for Stripe credit. */
+export function txUrl(read: Pick<Read, "rail" | "network" | "tx_hash">): string | null {
+  const hash = encodeURIComponent(read.tx_hash);
+  if (read.rail === "base") return `${EXPLORERS[read.network] ?? EXPLORERS["eip155:8453"]}${hash}`;
+  if (read.rail === "xrpl") return `https://testnet.xrpl.org/transactions/${hash}`;
+  return null;
+}
+
+export function railName(read: Pick<Read, "rail">): string {
+  return { base: "USDC on Base", xrpl: "XRPL", stripe: "Stripe credit" }[read.rail] ?? read.rail;
+}
 
 export function timeAgo(iso: string, now: number): string {
   const seconds = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));

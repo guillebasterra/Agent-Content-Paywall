@@ -24,9 +24,22 @@ def article_id_from(request: Request) -> str | None:
     return match[1] if match else None
 
 
+def _clean(raw: str) -> str:
+    return "".join(ch for ch in raw if ch.isprintable()).strip()[:MAX_AGENT_NAME]
+
+
 def agent_name(request: Request) -> str:
-    raw = request.headers.get("X-Agent-Name", "")
-    return "".join(ch for ch in raw if ch.isprintable()).strip()[:MAX_AGENT_NAME] or UNKNOWN_AGENT
+    """Self-reported: X-Agent-Name, else the User-Agent's product name, else "unknown".
+
+    Any User-Agent that mentions Claude is shown as "Claude".
+    """
+    if name := _clean(request.headers.get("X-Agent-Name", "")):
+        return name
+    user_agent = _clean(request.headers.get("User-Agent", ""))
+    if "claude" in user_agent.casefold():
+        return "Claude"
+    product = user_agent.split(" ", 1)[0].split("/", 1)[0]
+    return product or UNKNOWN_AGENT
 
 
 def agent_allowed(article: dict, agent: str) -> bool:

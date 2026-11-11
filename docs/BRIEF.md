@@ -1,6 +1,27 @@
-# Toll Gate — build brief (demo: Nov 5, 2026)
+# Toll Gate — build brief
 
 Read this with CLAUDE.md. You own planning and implementation. Only stop for me when you need something you can't get yourself (see "When to check in").
+
+## Payment design v2 (Nov 11, 2026, current)
+
+Supersedes the two-rail demo below for the demo path. Plan in `PLAN.md`, runbook in `DEMO.md`.
+
+- **Flow:** agent → Toll Gate treasury on Base, via x402. Claude Desktop finds the article with the Toll Gate MCP (discovery only) and pays with Coinbase's payments-mcp (`make_http_request_with_x402`): x402 v2, `exact`, USDC on Base mainnet (`eip155:8453`), settled by the CDP facilitator.
+- **Treasury:** a CDP server wallet, `TREASURY_BASE_ADDRESS`. Every paid read goes there.
+- **Writers:** the ledger credits the writer per read, minus `PLATFORM_FEE_BPS` (default 0). Writers need no wallet. Withdrawals are "coming soon".
+- **Receipts:** unchanged Ed25519 receipt, now with the Base tx hash, BaseScan link, payer and agent.
+- **Out of the demo path, still in the code:** XRPL testnet (`PAYMENT_RAIL=xrpl`, the fallback) and Stripe prepaid credit.
+- **Custody:** Toll Gate now holds real USDC owed to writers. Legal review of custodial balances (money transmission) before scaling beyond the demo.
+
+### Later options
+- MPP / Tempo sessions for high-frequency agents (pre-authorized cap, off-chain vouchers; see `MPP.md`)
+- Stripe Link / Shared Payment Tokens for agents paying by card
+- Direct-to-writer payouts: `payTo` = the writer's own address when they have one, no custody
+- Writer withdrawals: USDC to a writer's wallet, or Stripe Connect / bank payouts
+- x402 `upto` or `batch-settlement` schemes for passage-level or metered reads
+- List paid endpoints on the x402 Bazaar
+
+## v1 brief (Nov 5 demo, done)
 
 ## Goal
 

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import Logo from "@/components/logo";
-import { API_URL, type Article, BLURRED_FILLER, reads, usd } from "@/lib/api";
+import { API_URL, type Article, BLURRED_FILLER, PAYMENT_RAIL, reads, usd } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -56,7 +56,11 @@ export default async function ArticlePage({ params }: Props) {
           <section aria-label="Access" className="access">
             <span className="access-terms">
               <span className="access-price">≈ {usd(article.price_usd_micros)} per read</span>
-              <span className="muted small">{article.price_xrp} XRP on the XRP Ledger, or prepaid credit</span>
+              <span className="muted small">
+                {PAYMENT_RAIL === "base"
+                  ? "Paid in USDC on Base, over x402"
+                  : `${article.price_xrp} XRP on the XRP Ledger, or prepaid credit`}
+              </span>
               <span className="muted small">{terms(article)}</span>
             </span>
             <code className="access-code">GET /articles/{article.id}</code>

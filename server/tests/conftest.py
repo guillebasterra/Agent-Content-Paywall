@@ -7,6 +7,9 @@ os.environ["XRP_USD_RATE"] = "2"
 os.environ["TREASURY_ADDRESS"] = "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh"
 os.environ["STRIPE_SECRET_KEY"] = ""  # Tests that need Stripe pass a fake gateway.
 os.environ["AUTH_MODE"] = "demo"  # Tests that need Supabase mode pass their own auth.
+os.environ["PAYMENT_RAIL"] = "xrpl"  # The older suites test the XRPL and Stripe rails. Base tests switch it.
+os.environ["TREASURY_BASE_ADDRESS"] = "0x1111111111111111111111111111111111111111"
+os.environ["PLATFORM_FEE_BPS"] = "0"
 
 import uuid
 

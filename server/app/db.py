@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS purchases (
     network           TEXT NOT NULL,
     receipt           TEXT NOT NULL,
     agent             TEXT NOT NULL DEFAULT 'unknown',
+    fee_usd_micros    BIGINT NOT NULL DEFAULT 0,
     created_at        TEXT NOT NULL DEFAULT {now}
 );
 CREATE TABLE IF NOT EXISTS ledger_entries (
@@ -91,6 +92,7 @@ ADDED_COLUMNS = [
     ("articles", "storage_path", "TEXT"),
     ("writers", "stripe_details_submitted", "INTEGER NOT NULL DEFAULT 0"),
     ("writers", "stripe_payouts_enabled", "INTEGER NOT NULL DEFAULT 0"),
+    ("purchases", "fee_usd_micros", "BIGINT NOT NULL DEFAULT 0"),
 ]
 
 # The rate the site displayed before prices moved to USD (1 XRP = $2). One drop is two micro-dollars.
@@ -123,7 +125,7 @@ SELECT a.*, w.name AS author, w.xrpl_address AS pay_to,
 FROM articles a
 JOIN writers w ON w.id = a.writer_id
 LEFT JOIN (
-    SELECT article_id, COUNT(*) AS reads, CAST(SUM(amount_usd_micros) AS BIGINT) AS earned
+    SELECT article_id, COUNT(*) AS reads, CAST(SUM(amount_usd_micros - fee_usd_micros) AS BIGINT) AS earned
     FROM purchases GROUP BY article_id
 ) p ON p.article_id = a.id
 """
@@ -242,6 +244,16 @@ class Database:
                     c.execute(f"DELETE FROM {table}")
             c.execute("UPDATE agents SET credit_usd_micros = 0")
 
+    def reset_sales(self) -> None:
+        """Delete purchases and every balance (writer earnings, platform fees, agent credit).
+
+        Writers and articles stay, so a rehearsed demo can run again without re-uploading.
+        """
+        with self._conn() as c:
+            c.execute("DELETE FROM ledger_entries")
+            c.execute("DELETE FROM purchases")
+            c.execute("UPDATE agents SET credit_usd_micros = 0")
+
     # --- writers ---
 
     def ensure_writer(self, *, id, name, email, xrpl_address) -> None:
@@ -329,9 +341,12 @@ class Database:
 
     def record_purchase(
         self, *, ref, rail, article_id, writer_id, payer, pay_to, amount_usd_micros, amount_native,
-        network, receipt, agent, credit_writer=False, debit_agent_id=None,
+        network, receipt, agent, credit_writer=False, fee_usd_micros=0, debit_agent_id=None,
     ) -> bool:
-        """Write the purchase and its ledger entries in one transaction. A repeated ref changes nothing."""
+        """Write the purchase and its ledger entries in one transaction. A repeated ref changes nothing.
+
+        A credited writer gets the amount minus the fee, and the fee goes to the platform's account.
+        """
         with self._conn() as c:
             if debit_agent_id:
                 # Conditional, so credit can never go below zero however requests interleave.
@@ -345,13 +360,15 @@ class Database:
                 self._ledger(c, "agent", debit_agent_id, "read_debit", -amount_usd_micros, ref)
             inserted = c.execute(
                 "INSERT INTO purchases (tx_hash, rail, article_id, writer_id, payer, pay_to, amount_usd_micros, "
-                "amount_native, network, receipt, agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "amount_native, network, receipt, agent, fee_usd_micros) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT DO NOTHING",
                 (ref, rail, article_id, writer_id, payer, pay_to, amount_usd_micros, amount_native,
-                 network, json.dumps(receipt), agent),
+                 network, json.dumps(receipt), agent, fee_usd_micros),
             ).rowcount
             if inserted and credit_writer:
-                self._ledger(c, "writer", writer_id, "read_accrual", amount_usd_micros, ref)
+                self._ledger(c, "writer", writer_id, "read_accrual", amount_usd_micros - fee_usd_micros, ref)
+                if fee_usd_micros:
+                    self._ledger(c, "platform", "tollgate", "read_fee", fee_usd_micros, ref)
         return True
 
     @staticmethod
@@ -436,23 +453,24 @@ class Database:
         with self._conn() as c:
             mine = "FROM purchases p JOIN articles a ON a.id = p.article_id WHERE a.writer_id = ?"
             totals = c.execute(
-                "SELECT COUNT(*) AS reads, CAST(COALESCE(SUM(p.amount_usd_micros), 0) AS BIGINT) AS earned_usd_micros, "
-                "CAST(COALESCE(SUM(CASE WHEN substr(p.created_at, 1, 7) = ? "
-                f"THEN p.amount_usd_micros END), 0) AS BIGINT) AS month_usd_micros {mine}",
+                "SELECT COUNT(*) AS reads, CAST(COALESCE(SUM(p.amount_usd_micros - p.fee_usd_micros), 0) AS BIGINT) "
+                "AS earned_usd_micros, CAST(COALESCE(SUM(CASE WHEN substr(p.created_at, 1, 7) = ? "
+                f"THEN p.amount_usd_micros - p.fee_usd_micros END), 0) AS BIGINT) AS month_usd_micros {mine}",
                 (month, writer_id),
             ).fetchone()
             recent = c.execute(
-                "SELECT p.tx_hash, p.rail, p.amount_usd_micros, p.agent, p.created_at, a.title "
+                "SELECT p.tx_hash, p.rail, p.network, p.amount_usd_micros, p.fee_usd_micros, p.agent, p.created_at, a.title "
                 f"{mine} ORDER BY p.id DESC LIMIT 10",
                 (writer_id,),
             ).fetchall()
             by_agent = c.execute(
-                "SELECT p.agent AS name, COUNT(*) AS reads, CAST(SUM(p.amount_usd_micros) AS BIGINT) AS earned_usd_micros "
+                "SELECT p.agent AS name, COUNT(*) AS reads, "
+                "CAST(SUM(p.amount_usd_micros - p.fee_usd_micros) AS BIGINT) AS earned_usd_micros "
                 f"{mine} GROUP BY p.agent ORDER BY earned_usd_micros DESC, name",
                 (writer_id,),
             ).fetchall()
             agents_per_piece = c.execute(
-                "SELECT p.article_id, p.agent, CAST(SUM(p.amount_usd_micros) AS BIGINT) AS earned "
+                "SELECT p.article_id, p.agent, CAST(SUM(p.amount_usd_micros - p.fee_usd_micros) AS BIGINT) AS earned "
                 f"{mine} GROUP BY p.article_id, p.agent ORDER BY earned DESC, p.agent",
                 (writer_id,),
             ).fetchall()
