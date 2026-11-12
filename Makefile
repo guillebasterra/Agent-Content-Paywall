@@ -1,4 +1,4 @@
-.PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset demo-otp supabase-setup migrate-db agent topup payout stripe-listen rail web-demo treasury preflight tunnel test
+.PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset demo-otp supabase-setup migrate-db agent topup payout stripe-listen rail web-demo treasury preflight tunnel test set-price
 
 server:
 	cd server && uv run uvicorn app.main:app --reload --port 8000
@@ -39,6 +39,10 @@ buy-test:
 
 demo-reset:
 	cd server && uv run python ../scripts/demo_reset.py $(ARGS)
+
+# make set-price ARGS="--usd 0.02"   (every article)   ARGS="--usd 0.40 --id <id>"   (one)
+set-price:
+	cd server && uv run python ../scripts/set_price.py $(ARGS)
 
 demo-otp:
 	cd server && uv run python ../scripts/demo_otp.py $(EMAIL)

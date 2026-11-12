@@ -319,6 +319,15 @@ class Database:
                 ),
             )
 
+    def set_price(self, price_usd_micros: int, article_id: str | None = None) -> int:
+        """Reprice one article, or every article when no id is given. Returns how many changed."""
+        with self._conn() as c:
+            if article_id is None:
+                return c.execute("UPDATE articles SET price_usd_micros = ?", (price_usd_micros,)).rowcount
+            return c.execute(
+                "UPDATE articles SET price_usd_micros = ? WHERE id = ?", (price_usd_micros, article_id)
+            ).rowcount
+
     def set_storage_path(self, article_id: str, path: str) -> None:
         with self._conn() as c:
             c.execute("UPDATE articles SET storage_path = ? WHERE id = ?", (path, article_id))

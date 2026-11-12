@@ -15,7 +15,8 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
   - `stripe_gateway.py` every call to Stripe, faked in tests. `payouts.py` ledger balances to test Transfers
   - `session.py` `current_writer()`: `DemoAuth` or `SupabaseAuth`
   - `receipts.py` Ed25519-signed receipts (pynacl); public key at `/.well-known/tollgate-receipt-key`
-- `buyer-mcp/` the Toll Gate MCP, discovery only: `search_catalog(query)`, `get_article(id)`. No wallet, no payments. Each result carries `paid_url` and a `payment` object of arguments for payments-mcp's `make_http_request_with_x402`. The old paying MCP (XRPL wallet, budget, approval, Stripe credit) is at git tag `buyer-mcp-xrpl-v1`
+  - `agent_mcp.py` the Toll Gate MCP (`build_mcp(search, lookup)`), mounted at `/mcp` (streamable HTTP) and reused by the stdio MCP. Imports only `mcp` and the stdlib
+- `buyer-mcp/` the Toll Gate MCP over stdio, for development: imports `server/app/agent_mcp.py` and reads the catalog over HTTP. Discovery only: `search_catalog(query)`, `get_article(id)`. No wallet, no payments. Each result carries `paid_url` and a `payment` object of arguments for payments-mcp's `make_http_request_with_x402`. The old paying MCP (XRPL wallet, budget, approval, Stripe credit) is at git tag `buyer-mcp-xrpl-v1`
 - `web/` Next.js App Router: `/signin`, `/onboarding/payout`, `/dashboard` (polls every 3s), `/upload`, `/catalog`, `/articles/[id]`. Built from the "Toll Gate site mockup" artifact. `lib/session.ts` holds `getSession()`; `proxy.ts` refreshes Supabase sessions and guards writer pages; `lib/api-client.ts` `writerFetch` adds the bearer token. Public Supabase values come from the root `.env` through `next.config.ts`
 - `scripts/treasury.py` the Base treasury (CDP server account `tollgate-treasury`) → `TREASURY_BASE_ADDRESS`. `scripts/preflight.py`, `scripts/tunnel.py`
 - `scripts/create_wallets.py` faucet-funded XRPL testnet wallets → `.env`
@@ -26,7 +27,7 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - `make server-test` → API tests with fake facilitators (no network). `make test` runs server and MCP tests
 - `make treasury` → create or reuse the CDP treasury, save `TREASURY_BASE_ADDRESS` (`ARGS=--check` read-only)
 - `make tunnel` → Cloudflare quick tunnel to :8000, writes `TOLLGATE_API_URL`; restart `make server` after
-- `make preflight` → read-only checks for the Base demo (API, rail, treasury, CDP keys, facilitator, catalog, public URL)
+- `make preflight` → read-only checks for the Base demo (API, rail, treasury, CDP keys, facilitator, catalog, public URL). `ARGS="--url https://…"` checks a deploy
 - `make wallets` (`ARGS=--force` to replace after a testnet reset)
 - `make buy-test` (`ARGS="--id <id> --max-xrp 1"`)
 - `make buyer` → run the Toll Gate MCP over stdio
@@ -36,6 +37,7 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - `make agent` buyer's agent account, key to `.env` · `make topup ARGS="--usd 10"` Checkout link · `make stripe-listen` webhook forwarding · `make payout` test Transfers
 - `make rail RAIL=stripe|xrpl` → only for the old paying MCP. The server's rail is `PAYMENT_RAIL=base|xrpl` in `.env`, then restart
 - `make demo-otp EMAIL=` → prints a sign-in code without sending an email. On `/signin`: email, then "I have a code"
+- `make set-price ARGS="--usd 0.02"` (all) or `ARGS="--usd 0.40 --id <id>"` → reprices in the `.env` database (Supabase, shared with Railway)
 - `make demo-reset` → clear purchases and balances, keep writers and articles (`ARGS=--all` also deletes writers and articles). Keeps `.env`
 
 ## Decisions (don't undo without asking)
@@ -49,6 +51,9 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - payments-mcp proxies paid requests through `payments-mcp.coinbase.com/api/proxy`, so the API needs a public https URL. It forwards the tool's `headers`, so the MCP tells Claude to send `X-Agent-Name: Claude`.
 - The Toll Gate MCP builds payments-mcp arguments from the server's own `url`, with `maxAmountPerRequest` = the listed price as a hard cap. Ids are URL-quoted so they can't reach other routes.
 - `x402-xrpl` pins `fastapi<0.116` and x402 needs Starlette ≥ 1.3, so `server/pyproject.toml` overrides `fastapi>=0.162.0`. All XRPL and Stripe tests pass on it.
+- Remote MCP (Nov 12): `/mcp` on the API, stateless streamable HTTP with JSON replies, read-only, no auth (public catalog data only). DNS-rebinding protection off because the server is public by design. Paid URLs come from the server's `TOLLGATE_API_URL`. Users add it as a Claude custom connector (`docs/AGENT_SETUP.md`); payments-mcp stays local. The stdio MCP shares `agent_mcp.py`, so the two can't drift.
+- `mcp>=2.3` in the server needs `uvicorn>=0.31.1`, also overridden (x402-xrpl pins `<0.31`).
+- Catalog search: any word matches; results are ordered by how many distinct query words match, ties by the requested sort.
 - Tests: `tests/test_base.py` uses a fake facilitator and the official x402 Python client (throwaway key, no funds) through `httpx.ASGITransport`. Keep `test_payment_for_a_cheap_article_cannot_buy_another`.
 
 ### XRPL, Stripe, auth and content (v1)
@@ -89,13 +94,13 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - Base is mainnet with real USDC. Never spend from the treasury or move funds. Live purchases are Guillermo's.
 - Commit messages end with the Co-Authored-By / Claude-Session attribution lines the session provides.
 
-## Pick up here (as of Nov 11)
-- Payment design v2 is merged to `main` (branch `guillebasterra/base-x402`). Treasury created; `.env` has `TREASURY_BASE_ADDRESS`. No `PAYMENT_RAIL` line, so the default `base` applies
-- **Open decision, Guillermo's:** how to give the API a public https URL for payments-mcp. `make tunnel` (Cloudflare quick tunnel, needs `brew install cloudflared`) is ready but has never been run; a deploy is the other option. Nothing is exposed until he picks
-- **Next for Guillermo:** Desktop config + first live purchase, steps in `docs/DEMO.md`. The real-model flow (Claude choosing, paying with payments-mcp, citing) is untested
-- A `make server` (uvicorn `--reload`) and a Next server were running from the Conductor worktree `bandung` on Nov 11; the API hot-reloaded onto the Base rail and added `purchases.fee_usd_micros` to Supabase (additive)
+## Pick up here (as of Nov 12)
+- API on Railway: `https://tollgate-production-55166a8d.up.railway.app`, deploys on push to `main` (`server/Dockerfile`, build context `server/`). Same Supabase database as the local `.env`
+- Remote MCP at `/mcp` (Toll Gate custom connector). Setup for any Claude user: `docs/AGENT_SETUP.md`
+- All three articles are $0.02 (set with `make set-price`)
+- **Next for Guillermo:** add the connector, then the first live purchase in Claude Desktop. The real-model flow is untested
+- Guillermo's `claude_desktop_config.json` has only `payments-mcp` (node from a versioned Homebrew Cellar path). No stdio `tollgate` entry
 - **Rotate, if not done:** the Supabase `sb_secret_` key, the database password and the Stripe test key (printed into a transcript on Nov 4)
-- Supabase holds 3 articles (frost fans, Tidewater, XRPL reserves) by Guillermo Basterra, no purchases
 
 ## Status
 - [x] Phase 1 scaffold · [x] Phase 2 wallets · [x] Phase 3 backend (tested with a mocked facilitator)
@@ -109,7 +114,8 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - [ ] Needs a human: Stripe hosted onboarding (CAPTCHA), so "dashboard shows both", `connected` status and a successful `make payout` are unverified live
 - [x] v2: CDP treasury on Base · Base rail with the official x402 middleware + CDP facilitator · ledger credit net of fee · Toll Gate MCP (discovery) · dashboard (balance, reads, BaseScan, by agent, Withdraw stub) · payout screen without a wallet · `/llms.txt` · `make demo-reset` keeps content · `make preflight`. 293 server + 8 MCP tests
 - [x] v2 checked live without paying: server started against the real CDP facilitator and served a correct v2 challenge (`400000` USDC atomic to the treasury); pre-flight green except the public URL
-- [ ] v2 live: public URL, Desktop config, first real purchase with payments-mcp (Guillermo)
+- [x] Railway deploy passes `make preflight --url` · [x] remote MCP at `/mcp`, tested with the MCP client locally and on Railway
+- [ ] v2 live: connector added in Claude, first real purchase with payments-mcp (Guillermo)
 - [ ] A real model has never run a purchase end to end
 - [ ] `next dev` sometimes shows a "1 Issue" badge, cause not found, nothing in the console. `make web-demo` has no overlay
 - [ ] `.docx` and `.pdf` uploads (415 for now) · Xaman button (disabled, "Coming soon") · Training sales (the license and price are stored, there is no way to buy yet)

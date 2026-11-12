@@ -5,51 +5,43 @@ Claude Desktop finds an article through the Toll Gate MCP, pays for it with Coin
 **Real money.** Base mainnet, real USDC from the payments-mcp wallet. Each read costs the article's price (e.g. $0.40). Nothing here ever spends from the treasury.
 
 ## One-time setup
-1. Pull `main` in `~/me/cornell/dev/tollgate` (Claude Desktop runs the MCP from there).
-2. Treasury: done (`0xdef6b98CD666aA0d43125FAF320Db60999D01913`, CDP account `tollgate-treasury`). `make treasury` reuses it by name and rewrites `TREASURY_BASE_ADDRESS` if needed.
-3. A public URL tool: `brew install cloudflared`. payments-mcp sends the paid request from Coinbase's servers (`payments-mcp.coinbase.com/api/proxy`), so `localhost` can't work.
-4. Claude Desktop: merge this into `mcpServers` in `~/Library/Application Support/Claude/claude_desktop_config.json`, next to `payments-mcp`, then quit and reopen Desktop:
-   ```json
-   "tollgate": {
-     "command": "/Users/guillebasterra/.local/bin/uv",
-     "args": ["run", "--directory", "/Users/guillebasterra/me/cornell/dev/tollgate/buyer-mcp", "python", "-m", "buyer_mcp.server"]
-   }
-   ```
-   No keys go in this file. The MCP reads `TOLLGATE_API_URL` from `.env`.
-5. payments-mcp wallet: signed in, with a few dollars of USDC on Base. No ETH needed: x402 USDC payments are gasless for the payer.
+The API runs on Railway: `https://tollgate-production-55166a8d.up.railway.app` (deploys on push to `main`). Agent setup for any Claude user, including you: `AGENT_SETUP.md`. In short:
+1. payments-mcp in Claude Desktop, signed in, with a little USDC on Base (articles are $0.02).
+2. Toll Gate as a custom connector: **Customize > Connectors > + Add > Add custom connector**, URL `https://tollgate-production-55166a8d.up.railway.app/mcp`, **No sign in**. This replaces the local stdio entry in `claude_desktop_config.json`.
+3. Treasury: done (`0xdef6b98CD666aA0d43125FAF320Db60999D01913`, CDP account `tollgate-treasury`).
+
+Prices: `make set-price ARGS="--usd 0.02"` (all) or `ARGS="--usd 0.40 --id <id>"`. It writes the database in `.env`, which is the one Railway uses.
 
 ## Start (each run)
-Repo root, one terminal each:
 ```bash
-make tunnel      # writes the public https URL to .env as TOLLGATE_API_URL. Leave it open
-make server      # :8000. Start (or restart) after the tunnel, so it reads the new URL
-make web-demo    # :3000, production build. Rebuild after changing .env
-make preflight   # API up, Base rail, treasury = CDP account, CDP keys + facilitator, catalog, public URL serves the 402
+make preflight ARGS="--url https://tollgate-production-55166a8d.up.railway.app"
+make web-demo    # the writer dashboard on :3000, against the API in NEXT_PUBLIC_TOLLGATE_API_URL (localhost by default)
 ```
-The quick-tunnel URL changes on every `make tunnel`: restart `make server` each time. Keep `AUTH_MODE=supabase`, since the API is public while the tunnel is open; pre-flight fails on `AUTH_MODE=demo`. Close the tunnel after the demo.
+The dashboard reads the same Supabase database as Railway, so a local `make server` also shows Railway's purchases. For local development without Railway, `make tunnel` + `make server` still work (see `make preflight` without `--url`), and the stdio MCP runs with `make buyer`.
 
 ## Before the demo
 - [ ] `make test` passes
 - [ ] `make demo-reset`: clears purchases and balances, keeps writers and articles. `ARGS=--all` also deletes writers and articles
 - [ ] The answering article is in the catalog (`content/demo/orchard-frost-fans.md`, uploaded on `/upload`)
-- [ ] `make preflight` prints "all checks passed"
+- [ ] `make preflight ARGS="--url https://tollgate-production-55166a8d.up.railway.app"` prints "all checks passed"
 - [ ] Signed in on `http://localhost:3000/dashboard` (code via `make demo-otp EMAIL=...`)
-- [ ] In Desktop, both MCPs are on (tools menu shows `tollgate` and `payments-mcp`), and a new chat is open
+- [ ] In Desktop, a new chat with **+ > Connectors > Toll Gate** on, and payments-mcp available
 
 ## The demo
 1. Windows side by side: Claude Desktop and the dashboard.
 2. Paste into a new chat:
    > Why do Halden Valley orchards start their frost fans at 2.4 degrees? Find the answer on Toll Gate and buy the one article that answers it with payments-mcp. Then answer in a few sentences with a direct quote, the article's title and author, and its receipt: amount, transaction hash and BaseScan link.
-3. Claude calls `search_catalog`, picks the frost-fans piece, then `make_http_request_with_x402` with the `payment` arguments the MCP returned (`X-Agent-Name: Claude`, `maxAmountPerRequest` = the price). payments-mcp may ask you to approve in its window.
+3. Claude calls the connector's `search_catalog`, picks the frost-fans piece, then `make_http_request_with_x402` with the `payment` arguments it returned (`X-Agent-Name: Claude`, `maxAmountPerRequest` = the price). Desktop may ask you to allow each tool.
 4. Claude answers with the quote and receipt.
-5. Switch to the dashboard (it polls every 3s): balance +$0.40, reads +1, "from Claude", BaseScan link on the latest read and in Recent reads.
+5. Switch to the dashboard (it polls every 3s): balance +$0.02, reads +1, "from Claude", BaseScan link on the latest read and in Recent reads.
 
 Buying the same article again charges again (the server charges every read). Ask a different question or run `make demo-reset` after rehearsing.
 
 ## If something fails
 | Symptom | Fix |
 |---|---|
-| payments-mcp: request failed / can't reach URL | `make preflight`. Usually the tunnel URL changed: restart `make server` |
+| payments-mcp: request failed / can't reach URL | `make preflight ARGS="--url …"`. Check the Railway deploy |
+| Toll Gate tools missing in Desktop | Restart Desktop; check https://claude.ai/customize/connectors |
 | 402 after paying, `settlement_failed` | CDP facilitator or chain issue. Check BaseScan for the payer, then the XRPL fallback |
 | Agent shows as something other than Claude | Claude didn't pass `headers`. The prompt can say "send the payment arguments exactly as returned" |
 | 403 | The article's `allowed_agents` excludes the name sent |

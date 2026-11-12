@@ -260,7 +260,7 @@ def test_payment_for_a_cheap_article_cannot_buy_another(app, client, fake):
 def test_llms_txt_describes_the_base_flow(client):
     text = client.get("/llms.txt").text
     for needle in (BASE, "USDC", TREASURY, "PAYMENT-REQUIRED", "PAYMENT-SIGNATURE", "make_http_request_with_x402",
-                   "X-Agent-Name", "/.well-known/tollgate-receipt-key", "/catalog?q=", "ai-input"):
+                   "X-Agent-Name", "/.well-known/tollgate-receipt-key", "/catalog?q=", "ai-input", "/mcp"):
         assert needle in text
 
 
@@ -283,3 +283,9 @@ def test_missing_treasury_refuses_to_start(base_rail, fake, content, database, m
     monkeypatch.setattr(config, "TREASURY_BASE_ADDRESS", "")
     with pytest.raises(RuntimeError, match="TREASURY_BASE_ADDRESS"):
         create_app(base_facilitator=fake, database=database, content_dir=content)
+
+
+def test_repricing_changes_the_next_challenge(app, client):
+    assert app.state.db.set_price(20_000) == 1
+    assert challenge(client.get("/articles/seeded")).accepts[0].amount == "20000"
+    assert app.state.db.set_price(30_000, "nope") == 0

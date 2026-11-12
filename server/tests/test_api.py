@@ -344,6 +344,8 @@ def test_catalog_search_sort_and_counts(client):
     assert ids(sort="new")[-1] in {"seeded", "second-piece", "third-piece"}
     assert ids(q="CARBURETOR") == ["second-piece"]
     assert ids(q="how do carburetors work") == ["second-piece"]
+    # More matching words rank first, whatever the sort.
+    assert ids(q="third piece")[0] == "third-piece" and ids(q="second piece", sort="reads")[0] == "second-piece"
     third = next(a for a in client.get("/catalog").json()["articles"] if a["id"] == "third-piece")
     assert third["reads"] == 2 and third["earned_usd"] == "4.00"
     assert client.get("/catalog", params={"sort": "bad"}).status_code == 422

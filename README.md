@@ -56,6 +56,7 @@ Tests: `make test` (or `make server-test` and `make buyer-test`).
 | `GET /catalog/{id}` | free | one article's free view |
 | `GET /articles/{id}` | x402 | full text + Ed25519-signed receipt (tx hash, explorer link, content hash, license, amount, payer, agent). `PAYMENT_RAIL=base`: x402 v2, USDC on Base to the treasury. `xrpl`: XRPL testnet |
 | `GET /llms.txt` | free | how agents search, pay and verify receipts |
+| `/mcp` | free | remote MCP (streamable HTTP): `search_catalog`, `get_article` |
 | `GET /ledger` | free | recent purchases + earnings per writer |
 | `GET /.well-known/tollgate-receipt-key` | free | public key to verify receipts |
 | `POST /articles` | writer | publish from a multipart `.md` or `.txt` file. For sale immediately |
@@ -68,15 +69,13 @@ Live XRPL test (`PAYMENT_RAIL=xrpl`): `make server` in one terminal, `make buy-t
 
 ## Toll Gate MCP
 
-Discovery only: it holds no wallet and can't pay. Claude pays the returned URL with Coinbase's payments-mcp (`make_http_request_with_x402`). Claude Desktop config and the demo prompt are in `docs/DEMO.md`. For Claude Code:
-
-```bash
-claude mcp add tollgate -- uv run --directory "$PWD/buyer-mcp" python -m buyer_mcp.server
-```
+Discovery only: it holds no wallet and can't pay. Claude pays the returned URL with Coinbase's payments-mcp (`make_http_request_with_x402`). Defined once in `server/app/agent_mcp.py`, served two ways:
+- **Remote** (what users add): `https://tollgate-production-55166a8d.up.railway.app/mcp`, streamable HTTP, read-only, no sign-in. Setup for any Claude user: `docs/AGENT_SETUP.md`.
+- **Local stdio** (development): `make buyer`, or `claude mcp add tollgate -- uv run --directory "$PWD/buyer-mcp" python -m buyer_mcp.server`. Reads the catalog from `TOLLGATE_API_URL`.
 
 | Tool | Does |
 |---|---|
-| `search_catalog(query)` | Title, author, free preview, price, license, paid URL and payments-mcp arguments |
+| `search_catalog(query)` | Title, author, free preview, price, license, paid URL and payments-mcp arguments, best match first |
 | `get_article(id)` | The same for one article |
 
-`BUYER_AGENT_NAME` (default `Claude`) is the `X-Agent-Name` it tells Claude to send. The old paying buyer MCP (XRPL wallet, budget, Stripe credit) is at git tag `buyer-mcp-xrpl-v1`.
+The old paying buyer MCP (XRPL wallet, budget, Stripe credit) is at git tag `buyer-mcp-xrpl-v1`.

@@ -1,6 +1,7 @@
 """Toll Gate API.
 
 Free:   GET /catalog, GET /catalog/{id}, GET /ledger, GET /llms.txt, GET /.well-known/tollgate-receipt-key
+MCP:    /mcp  (streamable HTTP, read-only discovery: search_catalog, get_article. No auth)
 Paid:   GET /articles/{id}  (PAYMENT_RAIL=base: x402 v2, USDC on Base, to the treasury.
                              PAYMENT_RAIL=xrpl: x402 on XRPL testnet, or prepaid Stripe credit)
 Writer: GET/PUT /me/payout, PUT /me/profile, GET /me/dashboard, POST /articles, POST /me/stripe/*
@@ -10,6 +11,7 @@ Stripe: POST /webhooks/stripe, GET /agents/topup/done
 
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -19,11 +21,13 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel
 from x402_xrpl.facilitator import AsyncFacilitatorClient, FacilitatorClientOptions
 from xrpl.core.addresscodec import is_valid_classic_address
 
 from . import config
+from .agent_mcp import build_mcp
 from .content import content_hash, format_usd, preview_text, seed_articles, slugify, to_micros, to_xrp, usd_to_drops
 from .db import Database
 from .paywall import agent_name, paywall
@@ -131,10 +135,10 @@ def _stripe_status(writer: dict, gateway: StripeGateway | None) -> dict:
     }
 
 
-def _matches(item: dict, query: str) -> bool:
-    """Any word of the query counts, so an agent's natural phrasing still finds the piece."""
+def _score(item: dict, query: str) -> int:
+    """How many distinct query words the article contains. Any one is a match, so natural phrasing still finds it."""
     text = " ".join([item["title"], item["abstract"], item["author"], *item["keywords"]]).casefold()
-    return any(word in text for word in query.casefold().split())
+    return sum(word in text for word in set(query.casefold().split()))
 
 
 def _split_list(value: str) -> list[str]:
@@ -176,6 +180,11 @@ Writers are paid by Toll Gate: your payment goes to Toll Gate's treasury, and th
 GET {base}/catalog?q=<text>&sort=reads|earned|new
 Returns title, author, abstract, free preview, keywords, price_usd, license and url for each article.
 The preview is free to quote. The full text is paid.
+
+## MCP (free, read-only)
+
+{base}/mcp is a remote MCP server (streamable HTTP, no sign-in) with search_catalog(query) and get_article(id).
+Each result has the paid url and the arguments for Coinbase payments-mcp's make_http_request_with_x402.
 
 ## Buy one read (x402 v2)
 
@@ -325,8 +334,40 @@ def create_app(
 
     signer = ReceiptSigner(_signing_key())
 
-    app = FastAPI(title="Toll Gate")
+    def catalog_items(q: str | None = None, sort: str = "reads") -> list[dict]:
+        items = [listing(a) for a in db.articles(sort)]
+        if not q:
+            return items
+        # Best match first; ties keep the requested sort. The MCP shows only the top results.
+        scored = [(score, i) for i in items if (score := _score(i, q))]
+        return [i for _, i in sorted(scored, key=lambda pair: -pair[0])]
+
+    def catalog_entry(article_id: str) -> dict | None:
+        a = db.article(article_id)
+        return listing(a) if a else None
+
+    # The Toll Gate MCP for remote clients (e.g. a Claude custom connector), on the same catalog.
+    # Read-only and public, so no auth. Stateless with JSON replies: any instance can answer, nothing to resume.
+    # DNS-rebinding protection is for servers on a user's own machine; this one is public by design.
+    agent_mcp = build_mcp(
+        lambda q: run_in_threadpool(catalog_items, q),
+        lambda article_id: run_in_threadpool(catalog_entry, article_id),
+    )
+    mcp_http = agent_mcp.streamable_http_app(
+        streamable_http_path="/mcp",
+        stateless_http=True,
+        json_response=True,
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    )
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        async with agent_mcp.session_manager.run():
+            yield
+
+    app = FastAPI(title="Toll Gate", lifespan=lifespan)
     app.state.db, app.state.signer, app.state.auth = db, signer, auth
+    app.router.routes.extend(mcp_http.routes)
 
     settlements = Settlements(db, signer)
     if on_base:
@@ -362,18 +403,15 @@ def create_app(
 
     @app.get("/catalog")
     def catalog(q: str | None = None, sort: Literal["reads", "earned", "new"] = "reads"):
-        items = [listing(a) for a in db.articles(sort)]
-        if q:
-            items = [i for i in items if _matches(i, q)]
-        return {"articles": items}
+        return {"articles": catalog_items(q, sort)}
 
     @app.get("/catalog/{article_id}")
     def catalog_item(article_id: str):
         """One article's free view. Never paid."""
-        a = db.article(article_id)
-        if not a:
+        item = catalog_entry(article_id)
+        if not item:
             raise HTTPException(404, "unknown article")
-        return listing(a)
+        return item
 
     @app.get("/articles/{article_id}")
     def read_article(article_id: str):
