@@ -1,13 +1,18 @@
 """Pre-flight for the Base demo. Read-only: nothing is signed, paid or written.
 
-    make preflight
+    make preflight                                   # the local server on :8000
+    make preflight ARGS="--url https://<deploy>"     # a deployed server, e.g. Railway
 
 Checks, in order: the API is up on the Base rail, the treasury address is set and is the CDP
 account, the CDP keys work with the facilitator, the catalog has articles, and the public URL
 (which payments-mcp fetches from Coinbase's servers) serves the same 402 challenge.
+With --url, every check runs against that URL, which is already the public one, so the
+"public URL reaches this server" comparison is skipped. Treasury and CDP checks still use the
+local .env, which must hold the same keys as the deploy. Nothing in .env is changed.
 Prints addresses and URLs only, never keys.
 """
 
+import argparse
 import asyncio
 import os
 import sys
@@ -42,14 +47,21 @@ def get(url: str) -> httpx.Response | None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--url", help="check this deployed API instead of localhost")
+    args = parser.parse_args()
+
     env = {k: (v or "").strip() for k, v in dotenv_values(ROOT / ".env").items()}
     treasury = env.get("TREASURY_BASE_ADDRESS", "")
-    public = env.get("TOLLGATE_API_URL", "http://localhost:8000").rstrip("/")
+    remote = bool(args.url)
+    target = args.url.rstrip("/") if remote else LOCAL
+    public = target if remote else env.get("TOLLGATE_API_URL", "http://localhost:8000").rstrip("/")
 
     # 1. API up, on the Base rail
-    health = get(f"{LOCAL}/health")
+    health = get(f"{target}/health")
     payment = health.json().get("payment", {}) if health is not None and health.status_code == 200 else {}
-    if not check("API up", bool(payment), LOCAL if payment else f"nothing at {LOCAL}. Start `make server`"):
+    hint = "check the deploy's logs" if remote else "Start `make server`"
+    if not check("API up", bool(payment), target if payment else f"nothing at {target}. {hint}"):
         return finish()
     check("Base rail active", payment.get("rail") == "base" and payment.get("network") == BASE,
           f"{payment.get('rail')} on {payment.get('network')}" + ("" if payment.get("rail") == "base" else ". Set PAYMENT_RAIL=base and restart"))
@@ -57,7 +69,7 @@ def main() -> None:
     # 2. Treasury set, and it is the CDP account the server charges to
     check("TREASURY_BASE_ADDRESS set", bool(treasury), treasury or "run `make treasury`")
     check("server pays to the treasury", payment.get("pay_to", "").lower() == treasury.lower() != "",
-          payment.get("pay_to") or "restart `make server` after `make treasury`")
+          payment.get("pay_to") or ("set TREASURY_BASE_ADDRESS on the deploy" if remote else "restart `make server` after `make treasury`"))
 
     # 3. CDP keys valid: the account resolves, and the facilitator answers with our key
     keys = {k: env.get(k, "") for k in ("CDP_API_KEY_ID", "CDP_API_KEY_SECRET", "CDP_WALLET_SECRET")}
@@ -80,19 +92,26 @@ def main() -> None:
             check("CDP facilitator", False, short_error(exc))
 
     # 4. Catalog non-empty
-    catalog = get(f"{LOCAL}/catalog")
+    catalog = get(f"{target}/catalog")
     articles = catalog.json()["articles"] if catalog is not None and catalog.status_code == 200 else []
     check("catalog non-empty", bool(articles), f"{len(articles)} article(s)" if articles else "upload a piece on /upload")
 
     # 5. Public URL: payments-mcp fetches it from Coinbase's servers, so localhost can't work
     host = urlsplit(public).hostname or ""
     is_public = public.startswith("https://") and host not in {"localhost", "127.0.0.1", "0.0.0.0"}
-    check("TOLLGATE_API_URL is a public https URL", is_public,
+    check("--url is a public https URL" if remote else "TOLLGATE_API_URL is a public https URL", is_public,
           public + ("" if is_public else ". payments-mcp can't reach localhost: run `make tunnel`, then restart `make server`"))
     if is_public:
-        remote = get(f"{public}/health")
-        same = remote is not None and remote.status_code == 200 and remote.json().get("payment", {}).get("pay_to") == payment.get("pay_to")
-        check("public URL reaches this server", same, public if same else f"{public}/health didn't answer as this server")
+        if remote:
+            # The MCP hands Claude each article's `url`, so the deploy's TOLLGATE_API_URL must be itself.
+            wrong = [a["url"] for a in articles if not a["url"].startswith(f"{public}/")]
+            check("catalog paid URLs point at this deploy", not wrong,
+                  public if not wrong else f"{wrong[0]}. Set TOLLGATE_API_URL={public} on the deploy")
+            same = True
+        else:
+            answer = get(f"{public}/health")
+            same = answer is not None and answer.status_code == 200 and answer.json().get("payment", {}).get("pay_to") == payment.get("pay_to")
+            check("public URL reaches this server", same, public if same else f"{public}/health didn't answer as this server")
         if same and articles:
             first = articles[0]
             challenge = get(f"{public}/articles/{first['id']}")
@@ -104,7 +123,13 @@ def main() -> None:
                 ok = (option.network == BASE and option.asset == USDC and option.pay_to.lower() == treasury.lower()
                       and option.amount == str(first["price_usd_micros"]))
             check("public 402 challenge: Base USDC to the treasury at the listed price", ok, first["title"])
-    if is_public and env.get("AUTH_MODE", "demo") == "demo":
+    if remote:
+        # The deploy's AUTH_MODE isn't in the local .env, so ask it: a writer route without a token must be refused.
+        probe = get(f"{target}/me/payout")
+        status = probe.status_code if probe is not None else None
+        check("writer routes are authenticated", status == 401,
+              f"/me/payout without a token → {status}" + ("" if status == 401 else ". Set AUTH_MODE=supabase on the deploy"))
+    elif is_public and env.get("AUTH_MODE", "demo") == "demo":
         check("writer routes are authenticated", False, "AUTH_MODE=demo exposes unauthenticated writer routes on the public URL")
 
     print("\nNot checked here: the payments-mcp wallet's USDC balance. Ask Claude Desktop to run get_wallet_balance.")

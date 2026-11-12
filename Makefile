@@ -22,7 +22,7 @@ tunnel:
 	cd server && uv run python ../scripts/tunnel.py
 
 preflight:
-	cd server && uv run python ../scripts/preflight.py
+	cd server && uv run python ../scripts/preflight.py $(ARGS)
 
 web:
 	cd web && npm run dev
