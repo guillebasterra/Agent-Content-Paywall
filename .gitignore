@@ -27,3 +27,7 @@ next-env.d.ts
 .DS_Store
 .vscode/
 .idea/
+
+# deploy env copies (never commit)
+.env.railway
+.env.vercel
