@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500" role="img" aria-label="Architecture: Claude Desktop uses a remote discovery MCP and Coinbase payments-mcp to buy from a FastAPI API. The API's x402 paywall settles USDC on Base through the Coinbase CDP facilitator, signs receipts, and credits writers in Postgres, shown live on the writer dashboard.">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#EA580C"/>
+    </marker>
+    <marker id="g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8A8A85"/>
+    </marker>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="1199" height="499" rx="20" fill="#FAFAF8" stroke="#E6E6E2"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <!-- column headers -->
+    <g font-size="13" font-weight="600" letter-spacing="1.8" fill="#8A8A85">
+      <text x="40" y="62">AGENT &amp; WRITER</text>
+      <text x="450" y="62">PLATFORM API</text>
+      <text x="860" y="62">SETTLEMENT &amp; DATA</text>
+    </g>
+
+    <!-- left column -->
+    <g>
+      <rect x="40" y="86" width="300" height="250" rx="16" fill="#F1F1EE" stroke="#E2E2DE"/>
+      <text x="60" y="114" font-size="14" font-weight="600" fill="#5F5F5B">Claude Desktop</text>
+
+      <rect x="56" y="128" width="268" height="84" rx="12" fill="#fff" stroke="#D9D9D6"/>
+      <text x="74" y="160" font-size="17" font-weight="600" fill="#111">Discovery connector</text>
+      <text x="74" y="184" font-size="13" fill="#6B6B6B">remote MCP · search, preview, price</text>
+
+      <rect x="56" y="232" width="268" height="84" rx="12" fill="#fff" stroke="#D9D9D6"/>
+      <text x="74" y="264" font-size="17" font-weight="600" fill="#111">Coinbase payments-mcp</text>
+      <text x="74" y="288" font-size="13" fill="#6B6B6B">agent wallet · x402 client · USDC</text>
+
+      <rect x="40" y="360" width="300" height="100" rx="16" fill="#fff" stroke="#D9D9D6"/>
+      <text x="60" y="398" font-size="17" font-weight="600" fill="#111">Writer dashboard</text>
+      <text x="60" y="422" font-size="13" fill="#6B6B6B">Next.js · upload, pricing, live earnings</text>
+      <text x="60" y="442" font-size="13" fill="#6B6B6B">BaseScan link on every read</text>
+    </g>
+
+    <!-- middle column: the API -->
+    <g>
+      <rect x="450" y="86" width="300" height="374" rx="16" fill="#111"/>
+      <text x="470" y="114" font-size="14" font-weight="600" fill="#BDBDB8">FastAPI · Railway</text>
+
+      <rect x="466" y="128" width="268" height="84" rx="12" fill="#1E1E1E" stroke="#333"/>
+      <text x="484" y="160" font-size="17" font-weight="600" fill="#fff">/mcp</text>
+      <text x="484" y="184" font-size="13" fill="#A3A3A0">streamable HTTP, read-only catalog</text>
+
+      <rect x="466" y="232" width="268" height="84" rx="12" fill="#1E1E1E" stroke="#EA580C" stroke-width="1.5"/>
+      <text x="484" y="264" font-size="17" font-weight="600" fill="#fff">x402 v2 paywall</text>
+      <text x="484" y="288" font-size="13" fill="#FDBA74">GET /articles/{id} · price per article</text>
+
+      <rect x="466" y="360" width="268" height="84" rx="12" fill="#1E1E1E" stroke="#333"/>
+      <text x="484" y="392" font-size="17" font-weight="600" fill="#fff">Receipts + ledger</text>
+      <text x="484" y="416" font-size="13" fill="#A3A3A0">Ed25519 · writer credited per read</text>
+    </g>
+
+    <!-- right column -->
+    <g>
+      <rect x="860" y="108" width="300" height="84" rx="12" fill="#FFF7ED" stroke="#EA580C" stroke-width="1.5"/>
+      <text x="880" y="140" font-size="17" font-weight="600" fill="#C2410C">Base mainnet</text>
+      <text x="880" y="164" font-size="13" fill="#9A3412">USDC → platform treasury (CDP wallet)</text>
+
+      <rect x="860" y="232" width="300" height="84" rx="12" fill="#fff" stroke="#D9D9D6"/>
+      <text x="880" y="264" font-size="17" font-weight="600" fill="#111">Coinbase CDP facilitator</text>
+      <text x="880" y="288" font-size="13" fill="#6B6B6B">verifies and settles the payment</text>
+
+      <rect x="860" y="360" width="300" height="84" rx="12" fill="#fff" stroke="#D9D9D6"/>
+      <text x="880" y="392" font-size="17" font-weight="600" fill="#111">Postgres · Supabase</text>
+      <text x="880" y="416" font-size="13" fill="#6B6B6B">articles, purchases, balances · RLS</text>
+    </g>
+
+    <!-- arrows -->
+    <g font-size="12" fill="#6B6B6B">
+      <line x1="326" y1="170" x2="462" y2="170" stroke="#8A8A85" stroke-width="2" marker-end="url(#g)"/>
+      <text x="350" y="160">1 · search</text>
+
+      <line x1="326" y1="262" x2="462" y2="262" stroke="#EA580C" stroke-width="2.5" marker-end="url(#a)"/>
+      <text x="350" y="252">2 · pay via x402</text>
+      <line x1="462" y1="290" x2="328" y2="290" stroke="#8A8A85" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#g)"/>
+      <text x="350" y="310">5 · text + receipt</text>
+
+      <line x1="738" y1="274" x2="856" y2="274" stroke="#EA580C" stroke-width="2.5" marker-end="url(#a)"/>
+      <text x="760" y="264">3 · settle</text>
+
+      <line x1="1010" y1="231" x2="1010" y2="197" stroke="#EA580C" stroke-width="2.5" marker-end="url(#a)"/>
+      <text x="1020" y="218">4 · USDC moves</text>
+
+      <line x1="738" y1="402" x2="856" y2="402" stroke="#8A8A85" stroke-width="2" marker-end="url(#g)"/>
+      <text x="758" y="392">6 · record</text>
+
+      <line x1="462" y1="410" x2="344" y2="410" stroke="#8A8A85" stroke-width="2" marker-end="url(#g)"/>
+      <text x="360" y="400">7 · +1 read</text>
+    </g>
+  </g>
+</svg>
