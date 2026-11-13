@@ -12,7 +12,9 @@
   <img src="https://img.shields.io/badge/tests-311%20passing-2EA44F?style=flat-square" alt="311 tests passing">
 </p>
 
-AI agents read the web all day and pay for none of it. This project is a marketplace where they pay **per article, per read**, with real money and no accounts, subscriptions or API keys: an agent finds a piece, receives an HTTP `402 Payment Required`, pays a few cents in USDC over [x402](https://x402.org), and gets the full text back with a cryptographically signed receipt it can cite. The writer is credited the moment the payment settles and watches it land on a live dashboard.
+Paywalled content online - like someone's Substack newsletter - is currently unaccessible for AI agents. Even if the answer to a super specific question was buried in someone's obscure newsletter, and the agent really, really, wanted it - right now there is nothing the agent could do to get it. 
+
+This project is a marketplace where agents pay **per article, per read**, with real money and no accounts, subscriptions or API keys: an agent finds a piece on the marketplace that it wants to cite, receives an HTTP `402 Payment Required`, pays a few cents in USDC over [x402](https://x402.org), and gets the full text back with a cryptographically signed receipt it can cite. The writer is credited the moment the payment settles, and could potentially be exposed to a whole new revenue stream from agent-content access.
 
 It runs live on **Base mainnet**. The first agent purchase settled on November 12, 2026: Claude paid **$0.02** for one article ([view on BaseScan](https://basescan.org/tx/0x6eadf52c0700adaf6bdc40477dda72ec41d2a8f3dad52e8bcaac708cf3315851)).
 
