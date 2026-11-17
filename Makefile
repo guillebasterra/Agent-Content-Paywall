@@ -1,5 +1,9 @@
 .PHONY: server server-test buyer buyer-test web wallets buy-test demo-reset demo-otp supabase-setup migrate-db agent topup payout stripe-listen rail web-demo treasury preflight tunnel test set-price
 
+.PHONY: discord-import
+discord-import:
+	cd server && uv run python ../scripts/import_discord.py $(ARGS)
+
 server:
 	cd server && uv run uvicorn app.main:app --reload --port 8000
 

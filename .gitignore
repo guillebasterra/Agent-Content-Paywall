@@ -31,3 +31,6 @@ next-env.d.ts
 # deploy env copies (never commit)
 .env.railway
 .env.vercel
+
+# Private Discord snapshots; never publish transcripts in the repository.
+.discord-snapshots/

@@ -211,6 +211,8 @@ make preflight                # read-only checks: rail, treasury, CDP keys, faci
 
 ## Roadmap
 
+Discord channel snapshot demo on `ruolan`: see [proposal, setup and runbook](docs/DISCORD_DEMO.md). It imports one authorized channel into the existing paid-article flow and reuses the current MCP and payment implementation.
+
 - Writer withdrawals: USDC to a writer's own wallet, or bank payouts through Stripe Connect
 - Direct-to-writer payments, with no platform custody, for writers who bring a wallet
 - Sessions and metered reads (MPP / Tempo, x402 `upto`) for high-frequency agents
