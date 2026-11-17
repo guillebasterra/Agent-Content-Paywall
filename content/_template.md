@@ -1,9 +1,8 @@
 ---
 id: example-article
 title: Example article
-author: Guillermo Basterra
 abstract: Placeholder. Replace with a real piece.
-price_xrp: 0.5
+price_usd: 0.40
 license: ai-input
 tags: [example]
 ---

@@ -43,7 +43,7 @@ def main() -> None:
     article = next(a for a in catalog if a["id"] == args.id) if args.id else catalog[0]
     writer = article["pay_to"]
 
-    print(f"buying   {article['title']}  ({article['price_xrp']} XRP)")
+    print(f"buying   {article['title']}  (${article['price_usd']} = {article['price_xrp']} XRP)")
     print(f"before   buyer {xrp(buyer.address, client)}  writer {xrp(writer, client)}")
 
     result = x402_purchase(
@@ -52,6 +52,7 @@ def main() -> None:
         rpc_url=rpc,
         network_filter=os.getenv("XRPL_NETWORK", "xrpl:1"),
         max_value=str(int(args.max_xrp * 1_000_000)),
+        headers={"X-Agent-Name": "buy-test"},
         timeout=180,
     )
     print(f"status   {result.status}" + (f"  ({result.reason})" if result.reason else ""))

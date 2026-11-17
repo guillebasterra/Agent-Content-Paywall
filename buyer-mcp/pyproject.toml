@@ -1,17 +1,20 @@
 [project]
-name = "tollgate-buyer-mcp"
-version = "0.1.0"
+name = "tollgate-mcp"
+version = "0.2.0"
+description = "Toll Gate discovery for agents. No wallet: payment goes through Coinbase's payments-mcp."
 requires-python = ">=3.12,<3.14"
 dependencies = [
   "mcp>=2",
   "httpx",
   "python-dotenv",
-  "xrpl-py",
-  "x402-xrpl==0.3.4",
 ]
+
+[dependency-groups]
+dev = ["pytest", "anyio"]
 
 [tool.uv]
 package = false
-# x402-xrpl pins uvicorn<0.31 for its own server extras; the buyer client never
-# uses uvicorn, and mcp>=2 needs >=0.31.1.
-override-dependencies = ["uvicorn>=0.31.1"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
