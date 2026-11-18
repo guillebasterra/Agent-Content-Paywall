@@ -14,7 +14,7 @@ Extend Tollgate so an AI agent can discover and purchase content from one author
 
 ## Scope and acceptance
 
-One server, one regular text channel, one manually imported snapshot, and a suggested price of $0.02 per read. Existing articles, payment rails, API routes, database schema, and MCP tools remain compatible.
+One server, one regular text channel, one manually imported snapshot, and a suggested price of $0.01 per read. Existing articles, payment rails, API routes, database schema, and MCP tools remain compatible.
 
 Success means the snapshot appears in MCP discovery, an unpaid read returns 402 without the messages, and a paid read returns the snapshot with a verifiable receipt and writer credit.
 
@@ -46,7 +46,7 @@ Run from `server/` with the existing uv environment:
 
 ```bash
 uv sync --locked
-uv run python ../scripts/import_discord.py --title "Discord frost fan discussion" --abstract "A community discussion about orchard frost fan thresholds." --keywords "discord,orchard,frost" --limit 50 --price-usd 0.02
+uv run python ../scripts/import_discord.py --title "Discord frost fan discussion" --abstract "A community discussion about orchard frost fan thresholds." --keywords "discord,orchard,frost" --limit 50 --price-usd 0.01
 ```
 
 This writes a private Markdown file under the gitignored `.discord-snapshots/` directory and does not publish it. Review it locally, then upload it through the existing writer website. Set the title, description, keywords, price, **preview = none**, and **license = ai-input**. The public description acts as the preview; no message excerpts are exposed.

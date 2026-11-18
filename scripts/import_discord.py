@@ -23,7 +23,7 @@ def main():
     parser.add_argument("--title", required=True, help="Public catalog title")
     parser.add_argument("--abstract", required=True, help="Public preview description; no private message text")
     parser.add_argument("--keywords", default="discord,community")
-    parser.add_argument("--price-usd", default="0.02")
+    parser.add_argument("--price-usd", default="0.01")
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--publish", action="store_true", help="Publish using existing POST /articles")
     parser.add_argument("--api-url", default="http://localhost:8000")

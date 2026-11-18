@@ -100,7 +100,7 @@ def test_discord_snapshot_uses_existing_mcp_payment_receipt_and_writer_credit(mo
         client = TestClient(app)
         body, _ = snapshot()
         uploaded = client.post("/articles", data={"title": "Discord orchard snapshot", "abstract": "Community discussion about frost fans.",
-                               "keywords": "discord,orchard", "price_usd": "0.02", "preview_mode": "none", "license": "ai-input"},
+                               "keywords": "discord,orchard", "price_usd": "0.01", "preview_mode": "none", "license": "ai-input"},
                                files={"file": ("discord.md", body.encode(), "text/markdown")})
         assert uploaded.status_code == 201
         article_id = uploaded.json()["id"]
@@ -112,7 +112,7 @@ def test_discord_snapshot_uses_existing_mcp_payment_receipt_and_writer_credit(mo
 
         found, details = session(app, discover)
         assert found["count"] == 1
-        assert details["article"]["payment"]["maxAmountPerRequest"] == 20_000
+        assert details["article"]["payment"]["maxAmountPerRequest"] == 10_000
         assert details["article"]["preview"] == ""
         for public in (found, details, client.get("/catalog").json(), uploaded.json()):
             assert SECRET not in json.dumps(public)
@@ -124,8 +124,8 @@ def test_discord_snapshot_uses_existing_mcp_payment_receipt_and_writer_credit(mo
         assert data["body"] == body
         assert verify(data["receipt"], client.get("/.well-known/tollgate-receipt-key").json()["public_key"])
         assert data["receipt"]["payload"]["content_hash"] == content_hash(body)
-        assert data["receipt"]["payload"]["amount_usd"] == "0.02"
-        assert app.state.db.writer_balance("demo") == 20_000
+        assert data["receipt"]["payload"]["amount_usd"] == "0.01"
+        assert app.state.db.writer_balance("demo") == 10_000
         assert len(facilitator.settled) == 1
     finally:
         app.state.db.close()
