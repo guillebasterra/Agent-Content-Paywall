@@ -245,7 +245,10 @@ def test_migration_keeps_rows_and_order(tmp_path, empty_content, postgres_url):
     with psycopg.connect(postgres_url, autocommit=True) as admin:
         admin.execute(f"CREATE DATABASE {name}")
     target = Database(postgres_url.replace("/postgres?", f"/{name}?"))
-    assert copy_rows(app.state.db, target) == {"writers": 1, "articles": 1, "agents": 0, "purchases": 2, "ledger_entries": 0}
+    assert copy_rows(app.state.db, target) == {
+        "writers": 1, "articles": 1, "agents": 0, "purchases": 2, "ledger_entries": 0,
+        "discord_pairs": 0, "discord_channels": 0, "discord_drafts": 0,
+    }
     copy_rows(app.state.db, target)
     assert [p["agent"] for p in target.recent()] == ["Second", "First"]
     assert target.article("a-new-piece")["reads"] == 2

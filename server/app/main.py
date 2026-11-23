@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from x402_xrpl.facilitator import AsyncFacilitatorClient, FacilitatorClientOptions
 from xrpl.core.addresscodec import is_valid_classic_address
 
+from . import community_routes
 from . import config
 from .agent_mcp import build_mcp
 from .content import content_hash, format_usd, preview_text, seed_articles, slugify, to_micros, to_xrp, usd_to_drops
@@ -366,6 +367,7 @@ def create_app(
             yield
 
     app = FastAPI(title="Toll Gate", lifespan=lifespan)
+    app.include_router(community_routes.routes(db))
     app.state.db, app.state.signer, app.state.auth = db, signer, auth
     app.router.routes.extend(mcp_http.routes)
 

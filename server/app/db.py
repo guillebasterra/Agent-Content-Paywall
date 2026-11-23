@@ -15,7 +15,9 @@ from pathlib import Path
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-TABLES = ["writers", "articles", "agents", "purchases", "ledger_entries"]
+from . import community
+
+TABLES = ["writers", "articles", "agents", "purchases", "ledger_entries", *community.TABLES]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS writers (
@@ -78,6 +80,8 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
     UNIQUE (account_type, account_id, kind, ref)
 )
 """
+
+SCHEMA += ";" + community.SCHEMA
 
 SQLITE_DDL = {"serial": "INTEGER PRIMARY KEY AUTOINCREMENT", "now": "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))"}
 POSTGRES_DDL = {
@@ -307,17 +311,24 @@ class Database:
 
     def add_article(self, article: dict) -> None:
         with self._conn() as c:
-            c.execute(
-                "INSERT INTO articles (id, writer_id, title, abstract, body, preview_mode, keywords, "
-                "price_usd_micros, license, train_price_usd_micros, allowed_agents, storage_path) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    article["id"], article["writer_id"], article["title"], article["abstract"], article["body"],
-                    article["preview_mode"], json.dumps(article["keywords"]), article["price_usd_micros"],
-                    article["license"], article["train_price_usd_micros"], json.dumps(article["allowed_agents"]),
-                    article.get("storage_path"),
-                ),
-            )
+            self.insert_article(c, article)
+
+    def transaction(self):
+        return self._conn()
+
+    @staticmethod
+    def insert_article(c, article):
+        c.execute(
+            "INSERT INTO articles (id, writer_id, title, abstract, body, preview_mode, keywords, "
+            "price_usd_micros, license, train_price_usd_micros, allowed_agents, storage_path) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                article["id"], article["writer_id"], article["title"], article["abstract"], article["body"],
+                article["preview_mode"], json.dumps(article["keywords"]), article["price_usd_micros"],
+                article["license"], article["train_price_usd_micros"], json.dumps(article["allowed_agents"]),
+                article.get("storage_path"),
+            ),
+        )
 
     def set_price(self, price_usd_micros: int, article_id: str | None = None) -> int:
         """Reprice one article, or every article when no id is given. Returns how many changed."""

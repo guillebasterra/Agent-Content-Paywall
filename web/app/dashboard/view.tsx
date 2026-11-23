@@ -185,7 +185,7 @@ export default function DashboardView() {
                       </span>
                     </td>
                     <td className="number muted">{usd(piece.price_usd_micros)}</td>
-                    <td className="number">{count(piece.reads)}</td>
+                    <td className="number"><Link href={`/dashboard/sales/${encodeURIComponent(piece.id)}`}>{count(piece.reads)}</Link></td>
                     <td className="number strong">{usd(piece.earned_usd_micros)}</td>
                   </tr>
                 ))}
