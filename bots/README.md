@@ -106,3 +106,10 @@ in the local test database. **Apps → Tollgate Publisher Bot → AMA sales** an
 A live Codex model called the local MCP search tool and returned the title, $0.01
 price, and ai-input license. The unpaid article endpoint returned HTTP 402.
 The web app and API ran locally with demo writer authentication and the XRPL test rail.
+
+To repeat buyer discovery on macOS, start the local API with the database containing
+the published recap, sign in to the Codex CLI, and run
+[`Live AMA Buyer Demo.command`](../scripts/Live%20AMA%20Buyer%20Demo.command).
+The launcher connects to the local MCP endpoint on port 8000 and asks the model
+to report the public listing, price, and license. A fresh database needs its own
+published recap before the same search will return a match.
