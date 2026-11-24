@@ -6,7 +6,7 @@ import uuid
 
 from .content import to_micros
 
-MARKER = "【纪要定稿】"
+DRAFT_MARKERS = ("[AMA FINAL]", "【纪要定稿】")
 TABLES = ["discord_pairs", "discord_channels", "discord_drafts"]
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS discord_pairs (

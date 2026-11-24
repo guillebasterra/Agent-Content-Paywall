@@ -65,7 +65,8 @@ def test_pair_cannot_take_over_other_writer_and_sales_are_scoped(client):
     assert client.get(f"/me/discord/sales/{article}").status_code == 404
 
 
-def test_worker_registers_and_parses_one_markdown_attachment():
+@pytest.mark.parametrize("marker", ["[AMA FINAL]", "【纪要定稿】"])
+def test_worker_registers_and_parses_one_markdown_attachment(marker):
     import asyncio
     import sys
     from pathlib import Path
@@ -80,7 +81,7 @@ def test_worker_registers_and_parses_one_markdown_attachment():
         "Review AMA", "AMA sales"
     }
     file = SimpleNamespace(filename="notes.md", size=5, read=AsyncMock(return_value=b"hello"))
-    msg = SimpleNamespace(content="【纪要定稿】 Caching", attachments=[file])
+    msg = SimpleNamespace(content=f"{marker} Caching", attachments=[file])
     assert asyncio.run(message_draft(msg)) == ("Caching", "hello")
     msg.content += "\nsecond source"
     with pytest.raises(ValueError):

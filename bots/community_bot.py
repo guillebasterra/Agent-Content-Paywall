@@ -11,7 +11,7 @@ from discord.ext import tasks
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 from app import config
-from app.community import CommunityStore, MARKER
+from app.community import CommunityStore, DRAFT_MARKERS
 from app.content import format_usd
 from app.db import Database
 
@@ -24,7 +24,8 @@ def role_ids(member):
 
 
 async def message_draft(message):
-    title, _, body = message.content.removeprefix(MARKER).partition("\n")
+    marker = next(prefix for prefix in DRAFT_MARKERS if message.content.startswith(prefix))
+    title, _, body = message.content.removeprefix(marker).partition("\n")
     if message.attachments:
         if len(message.attachments) != 1 or body.strip():
             raise ValueError("Use the title and one file, or put the full text on the following lines.")
@@ -63,11 +64,11 @@ def build_client(store):
             raise ValueError("Give the app Read Message History in the AMA channel.")
         await asyncio.to_thread(store.pair, code, str(interaction.guild_id), str(interaction.channel_id),
                                 str(review_channel.id), str(interaction.id), visible_roles)
-        await interaction.response.send_message("Connected. Send 【纪要定稿】Title followed by the approved text or file.",
+        await interaction.response.send_message("Connected. Send [AMA FINAL] Title followed by the approved text or file.",
                                                 ephemeral=True)
 
     async def capture(message, settings):
-        if message.author.bot or not message.content.startswith(MARKER):
+        if message.author.bot or not message.content.startswith(DRAFT_MARKERS):
             return
         author = message.author
         if not isinstance(author, discord.Member):
@@ -82,7 +83,7 @@ def build_client(store):
 
     @client.event
     async def on_message(message):
-        if message.guild and message.content.startswith(MARKER):
+        if message.guild and message.content.startswith(DRAFT_MARKERS):
             settings = await asyncio.to_thread(store.channel, str(message.guild.id), str(message.channel.id))
             if settings:
                 try:

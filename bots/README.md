@@ -89,6 +89,20 @@ Use one worker instance per publisher application. The time-window CLI and origi
 
 1. Configure the publisher application's bot token, enable Message Content Intent and register the exact web OAuth redirect URL. Configure the web service with DISCORD_PUBLISHER_APPLICATION_ID, DISCORD_OAUTH_CLIENT_SECRET, DISCORD_REVIEW_CALLBACK_URL (https://your-web-host/api/discord-review/callback), and NEXT_PUBLIC_TOLLGATE_API_URL. Set TOLLGATE_WEB_URL for the worker. Use Supabase writer authentication on shared deployments. Only the backend/worker should receive database credentials.
 2. On the writer Dashboard, install the application and generate a single-use pairing code with the editor/reviewer role IDs and default USD price. An operator with Manage Server runs /connect_ama in the source channel, specifying a private reminder channel. Grant the worker View Channel and Read Message History on the source, and View Channel and Send Messages in the reminder channel. Pair again to change the site's role/price settings for this channel.
-3. An editor posts 【纪要定稿】Title, followed by the paid text on subsequent lines, or one UTF-8 .md/.txt attachment up to 2 MB. The first valid version is frozen per message. Post a fresh marked message for a replacement edition. For a hand-selected conversation excerpt, include speaker labels and reply context in the supplied text. Historic messages before pairing and unmarked conversation are excluded.
+3. An editor posts `[AMA FINAL] Title`, followed by the paid text on subsequent lines, or one UTF-8 .md/.txt attachment up to 2 MB. The first valid version is frozen per message. Post a fresh marked message for a replacement edition. For a hand-selected conversation excerpt, include speaker labels and reply context in the supplied text. Historic messages before pairing and unmarked conversation are excluded.
 4. Follow the private reminder or open Apps → Review AMA on the original message. Sign in with Discord, review the frozen text, edit the public abstract and price, confirm rights, then publish. The site verifies guild membership and the reviewer role with Discord on each preview and approval. Abstract-only preview and the ai-input license are fixed for this workflow. The existing article table feeds MCP, x402 and the writer ledger.
 5. Open Apps → AMA sales on the original message for reviewer-only totals. Sign in as the publishing writer for the article's latest 50 transactions and receipts. Pairing, drafts and delivery state share the backend's SQLite/Postgres store. A periodic history scan resumes from the channel checkpoint, and private reminders are retried until delivered. Reminders can repeat if the worker stops between delivery and acknowledgment; the draft and article stay unique.
+
+### Verified AMA walkthrough — November 24, 2026
+
+FlyingC paired the test server's stock-research channel with a private ama-review
+channel. The same AMA Reviewer role filled both role fields for this one-person demo.
+An original English recap titled *Inference Caching: A Rollout Checklist* triggered
+a private reminder. In Discord's message menu, the observed path was **Apps →
+Tollgate Publisher Bot → Review AMA**. Discord OAuth, rights confirmation, and
+**Confirm publication** produced article `ama-8bd4f7eda72a4d4783dd63ae7353191e`
+in the local test database. **Apps → Tollgate Publisher Bot → AMA sales** and
+**View writer sales** both showed zero paid reads and zero net earnings.
+A live Codex model called the local MCP search tool and returned the title, $0.01
+price, and ai-input license. The unpaid article endpoint returned HTTP 402.
+The web app and API ran locally with demo writer authentication and the XRPL test rail.
