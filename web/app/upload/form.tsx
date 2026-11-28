@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import EarningsEstimate from "@/components/earnings-estimate";
+import PricingHelp from "@/components/pricing-help";
 import Tile from "@/components/tile";
 import { PAYMENT_RAIL, XRP_USD_RATE, count, errorMessage } from "@/lib/api";
 import { writerFetch } from "@/lib/api-client";
@@ -277,6 +277,8 @@ export default function UploadForm({ author }: { author: string }) {
             </div>
           </div>
 
+          <PricingHelp price={price} onUsePrice={setPrice} />
+
           <fieldset className="field">
             <legend className="label legend">Agents that can buy</legend>
             <div className="checks">
@@ -311,7 +313,6 @@ export default function UploadForm({ author }: { author: string }) {
               </span>
             </Tile>
           </div>
-          <EarningsEstimate price={price} />
         </aside>
       </main>
     </div>
