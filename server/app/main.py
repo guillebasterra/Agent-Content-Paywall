@@ -30,6 +30,7 @@ from . import config
 from .agent_mcp import build_mcp
 from .content import content_hash, format_usd, preview_text, seed_articles, slugify, to_micros, to_xrp, usd_to_drops
 from .db import Database
+from .estimate import MAX_READERS, PRICE_GUIDANCE, monthly
 from .paywall import agent_name, paywall
 from .rails.base_usdc import BaseUsdcRail
 from .rails.settle import Settlements
@@ -412,6 +413,28 @@ def create_app(
         if not item:
             raise HTTPException(404, "unknown article")
         return item
+
+    @app.get("/estimate")
+    def estimate(price_usd: str, monthly_readers: int = 10_000):
+        """What a writer could earn a month at this price, if agents read their work and pay. Public, no data of anyone's."""
+        try:
+            price = to_micros(price_usd)
+        except ValueError as exc:
+            raise HTTPException(422, f"price_usd: {exc}") from None
+        if not 0 <= monthly_readers <= MAX_READERS:
+            raise HTTPException(422, f"monthly_readers: between 0 and {MAX_READERS:,}")
+        prices = sorted(a["price_usd_micros"] for a in db.articles())
+        return {
+            "price_usd": format_usd(price),
+            "monthly_readers": monthly_readers,
+            "fee_bps": config.PLATFORM_FEE_BPS,
+            "scenarios": monthly(price, monthly_readers, config.PLATFORM_FEE_BPS),
+            "price_guidance": {
+                **PRICE_GUIDANCE,
+                "catalog_median_usd": format_usd(prices[len(prices) // 2]) if prices else None,
+            },
+            "assumes": "Every agent read of your work goes through Toll Gate and pays your price.",
+        }
 
     @app.get("/articles/{article_id}")
     def read_article(article_id: str):

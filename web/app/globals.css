@@ -132,6 +132,22 @@ th.number, td.number { text-align: right; white-space: nowrap; }
 .upload-form { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 32px; }
 .upload-form > .field { flex: none; }
 .upload-preview { flex: 1 1 300px; display: flex; flex-direction: column; gap: 12px; }
+/* Earnings estimate, beside the price on /upload */
+.estimate { display: flex; flex-direction: column; gap: 14px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--hairline); }
+.estimate-readers { display: flex; flex-direction: column; gap: 8px; }
+.estimate-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.estimate-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 12px 0; border-bottom: 1px solid var(--hairline); color: var(--muted); }
+.estimate-label { font-size: 14px; }
+.estimate-value { font-size: 22px; line-height: 1.1; font-weight: 300; letter-spacing: -0.03em; color: var(--ink); white-space: nowrap; text-align: right; }
+.estimate-unit { font-size: 13px; letter-spacing: 0; color: var(--muted); }
+.estimate-basis { grid-column: 1 / -1; font-size: 11px; line-height: 1.5; }
+.estimate-row-main .estimate-label { color: var(--ink); font-weight: 500; }
+.estimate-row-main .estimate-value { font-size: 34px; color: var(--accent-text); }
+.estimate-note { font-size: 11px; line-height: 1.55; color: var(--muted); }
+.estimate-how summary { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.estimate-how summary:hover { color: var(--accent-text); }
+.estimate-sources { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.estimate-source-label { color: var(--ink); }
 .dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 120px; border: 1.5px dashed var(--border); border-radius: 12px; cursor: pointer; text-align: center; }
 .dropzone:hover { border-color: var(--muted); }
 input[type="file"]:focus-visible + .dropzone { outline: 2px solid var(--accent); outline-offset: 2px; }
