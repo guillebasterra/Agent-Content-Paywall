@@ -13,6 +13,7 @@ import pytest
 from eth_account import Account
 from fastapi.testclient import TestClient
 from x402 import x402Client
+from x402.extensions.bazaar import extract_discovery_info, validate_discovery_extension_spec
 from x402.http import decode_payment_required_header, decode_payment_response_header
 from x402.http.clients.httpx import x402AsyncTransport
 from x402.mechanisms.evm.exact import register_exact_evm_client
@@ -131,6 +132,36 @@ def test_challenge_is_the_wire_format_any_x402_client_reads(client):
         "scheme": "exact", "network": BASE, "amount": "400000", "asset": USDC, "payTo": TREASURY,
     }
     assert option["maxTimeoutSeconds"] == 300
+
+
+def test_challenge_declares_bazaar_discovery_metadata(client):
+    required = challenge(client.get("/articles/seeded"))
+    assert required.resource.service_name == "Toll Gate"
+    assert len(required.resource.tags) <= 5 and all(len(t) <= 32 for t in required.resource.tags)
+    description = required.resource.description
+    assert len(description) <= 500 and "https://tollgate.example/catalog?q=" in description
+    bazaar = required.extensions["bazaar"]
+    assert bazaar["routeTemplate"] == "/articles/:id"
+    assert bazaar["info"]["input"] == {"type": "http", "method": "GET", "pathParams": {"id": "seeded"}}
+    assert "body" in bazaar["info"]["output"]["example"]
+    assert bazaar["schema"]["properties"]["input"]["properties"]["pathParams"]["required"] == ["id"]
+
+
+def test_paying_client_echoes_bazaar_metadata_to_the_facilitator(app, fake):
+    """The CDP facilitator lists a route from what the settled payment carries, not from the challenge."""
+    assert buy(app).status_code == 200
+    payload, requirements = fake.settled[0]
+    assert payload.extensions["bazaar"]["routeTemplate"] == "/articles/:id"
+    assert payload.resource.url == "https://tollgate.example/articles/seeded"
+    # What a facilitator runs to catalog it: schema and protocol checks both pass.
+    assert validate_discovery_extension_spec(payload.extensions["bazaar"]).valid
+    found = extract_discovery_info(payload, requirements)
+    assert found is not None and found.method == "GET" and found.route_template == "/articles/:id"
+
+
+def test_bazaar_route_does_not_match_nested_paths(client, fake):
+    assert client.get("/articles/seeded/extra").status_code == 404
+    assert not fake.verified
 
 
 def test_each_article_is_charged_its_own_price(client):

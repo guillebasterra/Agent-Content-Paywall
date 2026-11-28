@@ -5,7 +5,8 @@
 
 Checks, in order: the API is up on the Base rail, the treasury address is set and is the CDP
 account, the CDP keys work with the facilitator, the catalog has articles, and the public URL
-(which payments-mcp fetches from Coinbase's servers) serves the same 402 challenge.
+(which payments-mcp fetches from Coinbase's servers) serves the same 402 challenge, and that
+CDP's validator accepts it for the Bazaar (and whether it's listed yet).
 With --url, every check runs against that URL, which is already the public one, so the
 "public URL reaches this server" comparison is skipped. Treasury and CDP checks still use the
 local .env, which must hold the same keys as the deploy. Nothing in .env is changed.
@@ -30,6 +31,7 @@ from treasury import ACCOUNT_NAME, account_address, short_error  # noqa: E402
 LOCAL = os.getenv("TOLLGATE_LOCAL_URL", "http://localhost:8000").rstrip("/")
 BASE = "eip155:8453"
 USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+CDP_X402 = "https://api.cdp.coinbase.com/platform/v2/x402"
 results: list[bool] = []
 
 
@@ -123,6 +125,8 @@ def main() -> None:
                 ok = (option.network == BASE and option.asset == USDC and option.pay_to.lower() == treasury.lower()
                       and option.amount == str(first["price_usd_micros"]))
             check("public 402 challenge: Base USDC to the treasury at the listed price", ok, first["title"])
+            if ok:
+                bazaar(f"{public}/articles/{first['id']}", host)
     if remote:
         # The deploy's AUTH_MODE isn't in the local .env, so ask it: a writer route without a token must be refused.
         probe = get(f"{target}/me/payout")
@@ -134,6 +138,32 @@ def main() -> None:
 
     print("\nNot checked here: the payments-mcp wallet's USDC balance. Ask Claude Desktop to run get_wallet_balance.")
     finish()
+
+
+def bazaar(resource: str, host: str) -> None:
+    """CDP's own checks for a Bazaar listing (public, no key), then whether the listing exists yet.
+
+    Listing happens after the first settled payment that carries the metadata, and can take
+    15 minutes, so "not listed yet" is a note, not a failure.
+    """
+    try:
+        result = httpx.post(f"{CDP_X402}/validate", json={"resource": resource, "method": "GET"}, timeout=60).json()
+    except (httpx.HTTPError, ValueError) as exc:
+        check("CDP Bazaar validation", False, short_error(exc))
+        return
+    failed = [c["check"] for c in result.get("preflight", []) if not c.get("passed") and c.get("severity") == "required"]
+    reason = (result.get("simulation") or {}).get("rejectionReason")
+    check("CDP Bazaar validation", bool(result.get("valid")), "" if result.get("valid") else reason or ", ".join(failed[:3]))
+    try:
+        found = httpx.get(f"{CDP_X402}/discovery/search", params={"urlSubstring": host, "limit": 20}, timeout=30).json()
+    except (httpx.HTTPError, ValueError):
+        found = {}
+    listed = [r for r in found.get("resources", []) if urlsplit(r.get("resource", "")).hostname == host]
+    if listed:
+        quality = listed[0].get("quality") or {}
+        print(f"note  listed in the Bazaar — {quality.get('l30DaysTotalCalls', 0)} paid call(s) in 30 days")
+    else:
+        print("note  not in the Bazaar yet: it lists the route after a settled purchase (up to 15 min)")
 
 
 def finish() -> None:

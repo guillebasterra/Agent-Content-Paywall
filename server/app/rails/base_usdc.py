@@ -14,6 +14,7 @@ from contextvars import ContextVar
 from starlette.requests import Request
 from starlette.responses import Response
 from x402 import x402ResourceServer
+from x402.extensions.bazaar import OutputConfig, bazaar_resource_server_extension, declare_discovery_extension
 from x402.http import (
     PAYMENT_RESPONSE_HEADER,
     HTTPRequestContext,
@@ -31,7 +32,8 @@ from ..content import format_usd
 from .base import Sale
 from .settle import Settlements, response_json, with_json
 
-ROUTE = "GET /articles/*"
+# A named parameter, not "*", so the Bazaar lists one entry with a readable template.
+ROUTE = "GET /articles/:id"
 BPS = 10_000
 # The article being sold on this request. Set before the SDK runs and read by its price callback.
 _article: ContextVar[dict] = ContextVar("tollgate_article")
@@ -73,6 +75,44 @@ def _unpaid_body(_: HTTPRequestContext) -> HTTPResponseBody:
     )
 
 
+# Bazaar limits: description <= 500 chars, service name <= 32, at most 5 tags of <= 32.
+SERVICE_NAME = "Toll Gate"
+TAGS = ["articles", "research", "writing", "analysis", "pay-per-read"]
+DESCRIPTION_LIMIT = 500
+
+
+def bazaar_description(public_url: str) -> str:
+    """Tells an agent when to use this, and how to find an id first. Facts only: listings are screened."""
+    return (
+        "Original articles by independent writers, sold to AI agents one read at a time. "
+        "Use when a question needs a specific expert piece rather than free web results. "
+        f"Find an article id with the free search GET {public_url}/catalog?q=<keywords>, which lists "
+        "title, abstract, price and license. GET /articles/:id returns the full text, title, author "
+        "and a receipt signed by Toll Gate. Each writer sets their own price."
+    )
+
+
+def bazaar_extension() -> dict:
+    """Discovery metadata. The CDP facilitator lists the route after the first settled payment that carries it."""
+    return declare_discovery_extension(
+        path_params_schema={
+            "properties": {"id": {"type": "string", "description": "Article id, from GET /catalog"}},
+            "required": ["id"],
+        },
+        output=OutputConfig(
+            example={
+                "id": "example-article",
+                "title": "Example article",
+                "author": "Writer name",
+                "license": "ai-input",
+                "content_hash": "sha256:...",
+                "body": "The full article text.",
+                "receipt": {"payload": {"amount_usd": "0.02", "tx_hash": "0x...", "explorer": "https://basescan.org/tx/0x..."}, "signature": "..."},
+            },
+        ),
+    )
+
+
 def public_request(request: Request) -> Request:
     """The request as seen at TOLLGATE_API_URL, so the challenge names the public URL even behind a tunnel."""
     scheme, _, host = config.PUBLIC_URL.partition("://")
@@ -108,12 +148,19 @@ class BaseUsdcRail:
 
         server = x402ResourceServer(facilitator)
         server.register(network, ExactEvmServerScheme())
+        server.register_extension(bazaar_resource_server_extension)
+        description = bazaar_description(config.PUBLIC_URL)
+        if len(description) > DESCRIPTION_LIMIT:  # the facilitator rejects verify and settle above this
+            raise RuntimeError(f"Bazaar description is {len(description)} chars; the limit is {DESCRIPTION_LIMIT}")
         routes = {
             ROUTE: RouteConfig(
                 accepts=PaymentOption(scheme="exact", pay_to=pay_to, price=_price, network=network, max_timeout_seconds=300),
-                description="One article from Toll Gate, for one read. Title, author and license are in the response body.",
+                description=description,
                 mime_type="application/json",
+                service_name=SERVICE_NAME,
+                tags=TAGS,
                 unpaid_response_body=_unpaid_body,
+                extensions=bazaar_extension(),
             )
         }
         # Fetches the facilitator's /supported once at startup. If that fails it retries on the first paid request.
