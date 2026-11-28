@@ -23,10 +23,11 @@ AGENT_READS_PER_HUMAN_READ = Fraction(1)
 TOP_PRICE, FLOOR_PRICE, NICHE_READERS, STEP = 100_000, 10_000, 1_000, 1_000
 
 HOW = (
-    "We assume about one paid agent read for every person who reads your work each month. "
+    "Readers are people: your human audience each month. We assume AI agents read your work about as often, "
+    "and each of those AI reads pays your price. "
     "Bots already make 57.5% of requests for web pages (Cloudflare, 2026); today about 1 in 31 visits "
     "to publisher sites is an AI agent (TollBit, Q4 2025).",
-    "Monthly earnings = readers × your price, minus Toll Gate's fee.",
+    "Monthly earnings = paid AI reads × your price, minus Toll Gate's fee.",
     "Suggested price: publishers charge AI $0.001–$0.10 a page, and paid content on the x402 Bazaar sells for "
     "$0.005–$0.02 (Nov 2026). Specialized work for a small audience is worth more per read, so the suggestion is "
     "$0.10 up to 1,000 readers and falls to $0.01 at 100,000.",

@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { API_URL } from "@/lib/api";
+import { API_URL, count } from "@/lib/api";
 
 type Estimate = {
   monthly_readers: number;
   price_usd: string;
+  agent_reads: number;
   earned_usd_micros: number;
   suggested: { price_usd: string; earned_usd_micros: number };
   how: string[];
@@ -58,9 +59,9 @@ export default function PricingHelp({ price, onUsePrice }: { price: string; onUs
   const onSuggested = current && Number(current.suggested.price_usd) === Number(price);
 
   return (
-    <section className="pricing-help" aria-label="Earnings estimate for this price">
+    <section className="pricing-help" aria-label="Monthly earnings at this price">
       <div className="pricing-help-title">
-        <label htmlFor="readers">If your work gets</label>
+        <label htmlFor="readers">If</label>
         <input
           id="readers"
           className="pricing-help-readers mono"
@@ -70,17 +71,18 @@ export default function PricingHelp({ price, onUsePrice }: { price: string; onUs
           onChange={(e) => setReaders(e.target.value)}
           aria-invalid={!readersOk}
         />
-        <span>readers a month</span>
+        <span>people read your work each month</span>
       </div>
 
-      {!readersOk && <p className="muted small">Enter a whole number of readers.</p>}
+      {!readersOk && <p className="muted small">Enter how many people read your work each month, as a whole number.</p>}
       {readersOk && !priceOk && <p className="muted small">Enter a price to see what it brings in.</p>}
       {failed && readersOk && priceOk && <p className="muted small">The estimate isn&apos;t available right now.</p>}
 
       {current && (
         <>
           <p className="pricing-help-line">
-            At ${current.price_usd} a read, you&apos;d make about{" "}
+            and AI agents read it as often, that&apos;s {count(current.agent_reads)} paid AI{" "}
+            {current.agent_reads === 1 ? "read" : "reads"}. At ${current.price_usd} each, you&apos;d make about{" "}
             <strong className="pricing-help-amount">{perMonth(current.earned_usd_micros)}</strong> a month.
           </p>
           {Number(price) > MARKET_TOP_USD && (
