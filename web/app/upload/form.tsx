@@ -65,7 +65,7 @@ export default function UploadForm({ author }: { author: string }) {
   const [preview, setPreview] = useState<PreviewMode>("w50");
   const [keywords, setKeywords] = useState<string[]>([]);
   const [keyword, setKeyword] = useState("");
-  const [price, setPrice] = useState("0.40");
+  const [price, setPrice] = useState("0.02");
   const [license, setLicense] = useState<"ai-input" | "ai-train">("ai-input");
   const [allAgents, setAllAgents] = useState(true);
   const [agents, setAgents] = useState<string[]>(AGENTS);
