@@ -116,8 +116,8 @@ Owner: Guillermo (Cornell Tech Product Studio + XRPL hackathon). Keep explanatio
 - [x] v2: CDP treasury on Base · Base rail with the official x402 middleware + CDP facilitator · ledger credit net of fee · Toll Gate MCP (discovery) · dashboard (balance, reads, BaseScan, by agent, Withdraw stub) · payout screen without a wallet · `/llms.txt` · `make demo-reset` keeps content · `make preflight`. 293 server + 8 MCP tests
 - [x] v2 checked live without paying: server started against the real CDP facilitator and served a correct v2 challenge (`400000` USDC atomic to the treasury); pre-flight green except the public URL
 - [x] Railway deploy passes `make preflight --url` · [x] remote MCP at `/mcp`, tested with the MCP client locally and on Railway
-- [ ] v2 live: connector added in Claude, first real purchase with payments-mcp (Guillermo)
-- [ ] A real model has never run a purchase end to end
+- [x] v2 live: Claude Desktop bought through the connector and payments-mcp (Nov 13, Nov 28)
+- [x] Listed in the CDP Bazaar (Nov 28) as `…/articles/:id`, from a payments-mcp purchase, so payments-mcp echoes the extension. Weak in semantic search until it has volume (quality recomputed every 6h)
 - [ ] `next dev` sometimes shows a "1 Issue" badge, cause not found, nothing in the console. `make web-demo` has no overlay
 - [ ] `.docx` and `.pdf` uploads (415 for now) · Xaman button (disabled, "Coming soon") · Training sales (the license and price are stored, there is no way to buy yet)
 - [ ] Phase 6 real articles (Guillermo writes; `content/demo/` holds invented drafts) · [ ] Phase 7 rehearsal + backup recording
